@@ -23,21 +23,9 @@ def _fmt_coord_labels(dim: int) -> str:
 def render_system_prompt(dim: int) -> str:
     coord_labels = _fmt_coord_labels(dim)
     return (
-        f"You are solving a spatial reasoning task in {dim}D space with coordinates ({coord_labels}). "
-        f"The origin O is at {_fmt_vec(np.zeros(dim))}.\n\n"
-        f"IMPORTANT: The statements and queries below are presented in strict chronological order. "
-        f"Each point definition, transformation, or query builds on everything that came before it. "
-        f"When answering a query, use only the information available up to that point in the sequence. "
-        f"If a transformation modifies a point, all subsequent references to that point (and any points "
-        f"defined relative to it) must reflect the updated position.\n\n"
-        f"Track all point positions carefully. You may reason through each query, but you MUST "
-        f"wrap your final answer for each query using this exact format:\n\n"
-        f"[Answer q_ID] <value>\n\n"
-        f"Where q_ID matches the query identifier and <value> is:\n"
-        f"- For position queries: ({coord_labels}) e.g. [Answer q_001] (3.0, -1.5{', 2.0' if dim >= 3 else ''})\n"
-        f"- For distance queries: a single number e.g. [Answer q_002] 5.385\n"
-        f"- For boolean queries: just the point name e.g. [Answer q_003] B\n\n"
-        f"You must provide one [Answer q_ID] line per query, in order."
+        f"Process the following {dim}D spatial reasoning scenario. "
+        f"Statements are chronological — propagate all transformations before answering.\n"
+        f"Format: [Answer q_ID] value — e.g. [Answer q_001] ({', '.join(['0.0'] * dim)}) or [Answer q_002] 5.385 or [Answer q_003] B"
     )
 
 
@@ -138,15 +126,12 @@ def render_transform(transform: Transform) -> str:
 
 def render_query_position(point_name: str, query_id: str, dim: int) -> str:
     coord_labels = _fmt_coord_labels(dim)
-    return (f"[Query {query_id}] What is the current position of Point {point_name}? "
-            f"Provide your answer as ({coord_labels}) coordinates.")
+    return f"[Query {query_id}] Position of {point_name}? ({coord_labels})"
 
 
 def render_query_distance(point_a: str, point_b: str, query_id: str) -> str:
-    return (f"[Query {query_id}] What is the distance from Point {point_a} to Point {point_b}? "
-            f"Provide your answer as a single number.")
+    return f"[Query {query_id}] Distance from {point_a} to {point_b}?"
 
 
 def render_query_boolean(point_target: str, point_a: str, point_b: str, query_id: str) -> str:
-    return (f"[Query {query_id}] Is Point {point_target} closer to Point {point_a} or Point {point_b}? "
-            f"Answer with just the point name (e.g., '{point_a}' or '{point_b}').")
+    return f"[Query {query_id}] Is {point_target} closer to {point_a} or {point_b}?"

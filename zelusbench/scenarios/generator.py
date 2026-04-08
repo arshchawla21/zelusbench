@@ -528,6 +528,8 @@ class ScenarioGenerator:
         # System prompt
         lines.append(render_system_prompt(cfg.dim))
         lines.append("")
+        lines.append("---")
+        lines.append("")
 
         # Distribute main points across splits
         splits = self._split_list(list(main_points), cfg.num_splits)
@@ -578,7 +580,7 @@ class ScenarioGenerator:
                     lines.append(render_point_definition(name, defn))
 
                 restatements = generate_restatement_distractors(
-                    main_points, min(2, cfg.distractor_ratio), self.rng,
+                    defined_main, min(2, cfg.distractor_ratio), self.rng,
                 )
                 for r in restatements:
                     lines.append(r)
