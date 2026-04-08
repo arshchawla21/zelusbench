@@ -112,7 +112,7 @@ Each scenario yields **multiple scored queries**, giving a granular performance 
 
 ## Benchmark Tasks
 
-ZelusBench is a suite of **8 Kaggle benchmark tasks**, each a standalone notebook in `tasks/`. Tasks are split into two categories: **isolated** (vary one attention axis, randomize everything else) and **combined** (all axes at a fixed difficulty tier).
+ZelusBench is a suite of **18 Kaggle benchmark tasks**, each a standalone notebook in `tasks/`. Tasks are split into two categories: **isolated** (vary one attention axis, randomize everything else) and **combined** (all axes at a fixed difficulty tier). Each level of each axis is its own task, enabling fine-grained leaderboard comparison.
 
 ### Design Philosophy
 
@@ -120,101 +120,81 @@ Each isolated benchmark varies **only its target variable** while randomizing al
 
 Queries are **depth-targeted**: every query in a benchmark must probe the exact difficulty level being tested (e.g., depth=8 queries target points at exactly chain depth 8).
 
+Backgrounds are **deterministic across levels**: within a category (e.g., sustained attention), the same seed index produces the same randomized background (dim, distractors, transforms, point types) regardless of the target level. This ensures fair comparison — the only thing that changes between short/medium/long is the chain depth.
+
 ### Isolated Benchmarks
 
-#### 1. Sustained Attention — `sustained_attention.ipynb`
+#### 1. Sustained Attention (3 tasks)
 
-Does accuracy degrade as dependency chains grow longer?
+Does accuracy degrade as dependency chains grow longer? Uses LINEAR structure to guarantee exact depth targeting. All other knobs randomized per scenario.
 
-| Depth | Example |
-|---|---|
-| 2 | A → B (query B) |
-| 4 | A → B → C → D (query D) |
-| 8 | 8-hop chain |
-| 16 | 16-hop chain |
-| 32 | 32-hop chain |
+| Task | Notebook | Depths | Seeds | Scenarios |
+|---|---|---|---|---|
+| `attn_sustained_short` | `attn_sustained_short.ipynb` | 2, 3, 4 | 10 each | 30 |
+| `attn_sustained_medium` | `attn_sustained_medium.ipynb` | 8, 9, 10 | 10 each | 30 |
+| `attn_sustained_long` | `attn_sustained_long.ipynb` | 16, 18, 20 | 10 each | 30 |
 
-Uses LINEAR structure to guarantee exact depth targeting. All other knobs (distractors, transforms, dim, point types) are randomized per scenario. 50 scenarios, ~150 queries.
+#### 2. Selective Attention (3 tasks)
 
-#### 2. Selective Attention — `selective_attention.ipynb`
+Does the model get distracted by irrelevant but salient information? Distractors include disconnected subgraphs, irrelevant branches, and restatements.
 
-Does the model get distracted by irrelevant but salient information?
+| Task | Notebook | Distractor Level | Seeds | Scenarios |
+|---|---|---|---|---|
+| `attn_selective_clean` | `attn_selective_clean.ipynb` | CLEAN (0:1) | 15 | 15 |
+| `attn_selective_noisy` | `attn_selective_noisy.ipynb` | HIGH (3:1) | 15 | 15 |
+| `attn_selective_saturated` | `attn_selective_saturated.ipynb` | EXTREME (10:1) | 15 | 15 |
 
-| Level | Ratio (irrelevant : relevant) |
-|---|---|
-| Clean | 0:1 (no distractors) |
-| Low | 1:1 |
-| High | 3:1 |
-| Extreme | 10:1 |
-
-Distractors include disconnected subgraphs, irrelevant branches, and restatements. Background (depth, structure, transforms, dim) randomized. 40 scenarios, ~120 queries.
-
-#### 3. Attention Updating — `attention_updating.ipynb`
+#### 3. Attention Updating (3 tasks)
 
 Can the model update its representation after geometric transforms?
 
-| Level | Transforms |
-|---|---|
-| Static | 0 |
-| Light | 2 (rotation, translation) |
-| Heavy | 4 (+ reflection, scaling) |
-| Extreme | 7 (all types) |
+| Task | Notebook | Transform Density | Seeds | Scenarios |
+|---|---|---|---|---|
+| `attn_updating_static` | `attn_updating_static.ipynb` | STATIC (0 transforms) | 15 | 15 |
+| `attn_updating_light` | `attn_updating_light.ipynb` | LIGHT (2 transforms) | 15 | 15 |
+| `attn_updating_heavy` | `attn_updating_heavy.ipynb` | EXTREME (7 transforms) | 15 | 15 |
 
-Background randomized. 40 scenarios, ~120 queries.
-
-#### 4. Structural Attention — `structural_attention.ipynb`
+#### 4. Structural Attention (4 tasks)
 
 How does dependency graph topology affect accuracy?
 
-| Structure | Description |
-|---|---|
-| Linear | A → B → C → D |
-| Branching | A → B, A → C (two branches from a common root) |
-| Merging | Two chains converge via midpoint |
-| Diamond | A → B, A → C, D = f(B, C) |
+| Task | Notebook | DAG Structure | Seeds | Scenarios |
+|---|---|---|---|---|
+| `attn_structural_linear` | `attn_structural_linear.ipynb` | LINEAR | 15 | 15 |
+| `attn_structural_branching` | `attn_structural_branching.ipynb` | BRANCHING | 15 | 15 |
+| `attn_structural_merging` | `attn_structural_merging.ipynb` | MERGING | 15 | 15 |
+| `attn_structural_diamond` | `attn_structural_diamond.ipynb` | DIAMOND | 15 | 15 |
 
-Background randomized. 40 scenarios, ~120 queries.
-
-#### 5. Dimensionality — `dimensionality.ipynb`
+#### 5. Dimensionality (2 tasks)
 
 Can the model maintain higher-dimensional state?
 
-| Dim | Space |
-|---|---|
-| 2D | Flat plane (x, y) |
-| 3D | Standard spatial (x, y, z) |
+| Task | Notebook | Dim | Seeds | Scenarios |
+|---|---|---|---|---|
+| `attn_dim_2` | `attn_dim_2.ipynb` | 2D | 15 | 15 |
+| `attn_dim_3` | `attn_dim_3.ipynb` | 3D | 15 | 15 |
 
-Background randomized. 30 scenarios, ~90 queries.
+### Combined Benchmarks (3 tasks)
 
-### Combined Benchmarks
+These test how multiple difficulty axes interact simultaneously. All knobs are set to the same tier.
 
-These test how multiple difficulty axes interact simultaneously.
-
-#### 6. Attention Simple — `attn_simple.ipynb`
-
-All knobs at minimum difficulty. Shallow chains (2-3), linear structure, no distractors, no transforms, 2D. Models should score near-perfectly. 15 scenarios, 45 queries.
-
-#### 7. Attention Medium — `attn_medium.ipynb`
-
-All knobs at moderate difficulty. Medium chains (5-8), branching/merging structures, low distractors, light transforms, 3D. 15 scenarios, 45 queries.
-
-#### 8. Attention Complex — `attn_complex.ipynb`
-
-All knobs at maximum difficulty. Deep chains (16-32), diamond DAG, extreme distractors, heavy/extreme transforms, 3D, all query and point types. Designed to be very challenging. 15 scenarios, 75 queries.
+| Task | Notebook | Depth | Structure | Distractors | Transforms | Dim | Seeds | Scenarios | Queries |
+|---|---|---|---|---|---|---|---|---|---|
+| `attn_simple` | `attn_simple.ipynb` | 2–3 | LINEAR | CLEAN | STATIC | 2D | 15 | 15 | 45 |
+| `attn_medium` | `attn_medium.ipynb` | 5–8 | BRANCHING/MERGING | LOW | LIGHT | 3D | 15 | 15 | 45 |
+| `attn_complex` | `attn_complex.ipynb` | 16–32 | DIAMOND | EXTREME | HEAVY/EXTREME | 3D | 15 | 15 | 75 |
 
 ### Total Coverage
 
-| Task | Scenarios | Queries |
-|---|---|---|
-| Sustained Attention | 50 | 150 |
-| Selective Attention | 40 | 120 |
-| Attention Updating | 40 | 120 |
-| Structural Attention | 40 | 120 |
-| Dimensionality | 30 | 90 |
-| Attention Simple | 15 | 45 |
-| Attention Medium | 15 | 45 |
-| Attention Complex | 15 | 75 |
-| **Total** | **245** | **765** |
+| Category | Tasks | Scenarios | Queries/Scenario | Est. Queries |
+|---|---|---|---|---|
+| Sustained Attention | 3 | 90 | 3 | ~270 |
+| Selective Attention | 3 | 45 | 3 | ~135 |
+| Attention Updating | 3 | 45 | 3 | ~135 |
+| Structural Attention | 4 | 60 | 3 | ~180 |
+| Dimensionality | 2 | 30 | 3 | ~90 |
+| Combined (simple/medium/complex) | 3 | 45 | 3–5 | ~165 |
+| **Total** | **18** | **315** | — | **~975** |
 
 ---
 
@@ -277,15 +257,37 @@ zelusbench/
 │       ├── scorer.py              # Tiered scoring (EXACT/CLOSE/APPROXIMATE/WRONG)
 │       └── reports.py             # Diagnostic profiles across dimensions
 │
-├── tasks/                         # Kaggle benchmark notebooks (one per task)
-│   ├── sustained_attention.ipynb  # Chain depth: 2, 4, 8, 16, 32
-│   ├── selective_attention.ipynb  # Distractors: 0:1, 1:1, 3:1, 10:1
-│   ├── attention_updating.ipynb   # Transforms: 0, 2, 4, 7
-│   ├── structural_attention.ipynb # DAG: linear, branching, merging, diamond
-│   ├── dimensionality.ipynb       # Dim: 2D, 3D
-│   ├── attn_simple.ipynb          # Combined easy (baseline)
-│   ├── attn_medium.ipynb          # Combined medium
-│   └── attn_complex.ipynb         # Combined hard (stress test)
+├── tasks/                         # Kaggle benchmark notebooks (18 tasks, one per notebook)
+│   │
+│   │  # Sustained Attention (chain depth)
+│   ├── attn_sustained_short.ipynb     # Depths 2, 3, 4
+│   ├── attn_sustained_medium.ipynb    # Depths 8, 9, 10
+│   ├── attn_sustained_long.ipynb      # Depths 16, 18, 20
+│   │
+│   │  # Selective Attention (distractors)
+│   ├── attn_selective_clean.ipynb     # CLEAN (0:1 ratio)
+│   ├── attn_selective_noisy.ipynb     # HIGH (3:1 ratio)
+│   ├── attn_selective_saturated.ipynb # EXTREME (10:1 ratio)
+│   │
+│   │  # Attention Updating (transforms)
+│   ├── attn_updating_static.ipynb     # STATIC (0 transforms)
+│   ├── attn_updating_light.ipynb      # LIGHT (2 transforms)
+│   ├── attn_updating_heavy.ipynb      # EXTREME (7 transforms)
+│   │
+│   │  # Structural Attention (DAG topology)
+│   ├── attn_structural_linear.ipynb   # LINEAR
+│   ├── attn_structural_branching.ipynb# BRANCHING
+│   ├── attn_structural_merging.ipynb  # MERGING
+│   ├── attn_structural_diamond.ipynb  # DIAMOND
+│   │
+│   │  # Dimensionality
+│   ├── attn_dim_2.ipynb               # 2D
+│   ├── attn_dim_3.ipynb               # 3D
+│   │
+│   │  # Combined (all axes at one tier)
+│   ├── attn_simple.ipynb              # All easy (baseline)
+│   ├── attn_medium.ipynb              # All moderate
+│   └── attn_complex.ipynb             # All hard (stress test)
 │
 └── tests/                         # Unit tests (77 tests)
     ├── test_point.py              # 21 tests: all point definition types
@@ -317,17 +319,22 @@ Each notebook in `tasks/` is a standalone Kaggle Benchmark task using the `kaggl
 ### Task Pattern
 
 ```python
-@kbench.task(name="zelusbench_sustained_attention")
-def zelusbench_sustained_attention(llm) -> tuple[float, float]:
-    for depth in CHAIN_DEPTHS:
-        for seed in range(SEEDS):
-            cfg = ScenarioConfig.randomize_except(rng, pinned={...})
+@kbench.task(name="zelusbench_attn_sustained_short")
+def zelusbench_attn_sustained_short(llm) -> tuple[float, float]:
+    for depth in CHAIN_DEPTHS:       # e.g., [2, 3, 4]
+        for i in range(SEEDS):
+            rng = random.Random(i * 7919)  # deterministic background
+            cfg = ScenarioConfig.randomize_except(rng, pinned={
+                "min_chain_depth": depth, "max_chain_depth": depth,
+                "dag_structure": DAGStructure.LINEAR,
+                "query_target_depth": depth, "seed": seed,
+            })
             scenario = ScenarioGenerator(cfg).generate(scenario_id)
             response = llm.prompt(scenario.prompt)
             scores = score_response(response, scenario)
     return overall_accuracy, std_dev
 
-zelusbench_sustained_attention.run(llm=kbench.llm)
+zelusbench_attn_sustained_short.run(llm=kbench.llm)
 ```
 
 ### Evaluation

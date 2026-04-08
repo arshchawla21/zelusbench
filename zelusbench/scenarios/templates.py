@@ -30,8 +30,14 @@ def render_system_prompt(dim: int) -> str:
         f"When answering a query, use only the information available up to that point in the sequence. "
         f"If a transformation modifies a point, all subsequent references to that point (and any points "
         f"defined relative to it) must reflect the updated position.\n\n"
-        f"Track all point positions carefully. When asked a question, provide your answer "
-        f"in the exact format requested. Show your final answer clearly."
+        f"Track all point positions carefully. You may reason through each query, but you MUST "
+        f"wrap your final answer for each query using this exact format:\n\n"
+        f"[Answer q_ID] <value>\n\n"
+        f"Where q_ID matches the query identifier and <value> is:\n"
+        f"- For position queries: ({coord_labels}) e.g. [Answer q_001] (3.0, -1.5{', 2.0' if dim >= 3 else ''})\n"
+        f"- For distance queries: a single number e.g. [Answer q_002] 5.385\n"
+        f"- For boolean queries: just the point name e.g. [Answer q_003] B\n\n"
+        f"You must provide one [Answer q_ID] line per query, in order."
     )
 
 

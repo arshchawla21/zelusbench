@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from enum import Enum, auto
 
@@ -164,3 +165,33 @@ def score_scenario(queries: list[dict], parsed_responses: list[dict]) -> list[Qu
     for query, parsed in zip(queries, parsed_responses):
         scores.append(score_query(query, parsed))
     return scores
+
+
+def score_response(response_text: str, scenario) -> list[QueryScore]:
+    """Score a full model response against a scenario's queries.
+
+    Splits the response by [Answer q_ID] tags first (structured format).
+    Falls back to [Query q_ID] tags, then treats the entire response as
+    one block per query.
+    """
+    from .parser import parse_model_response
+
+    query_dicts = [q.to_dict() for q in scenario.queries]
+
+    # Try splitting by [Answer q_ID] tags first
+    answer_parts = re.split(r'\[Answer\s+q_\d+\]', response_text)
+    if len(answer_parts) > 1:
+        answer_parts = answer_parts[1:]
+
+    # Fall back to [Query q_ID] tags
+    if len(answer_parts) != len(query_dicts):
+        answer_parts = re.split(r'\[Query\s+q_\d+\]', response_text)
+        if len(answer_parts) > 1:
+            answer_parts = answer_parts[1:]
+
+    # If neither split works, give the full text to each parser
+    if len(answer_parts) != len(query_dicts):
+        answer_parts = [response_text] * len(query_dicts)
+
+    return [score_query(qd, parse_model_response(rp, qd))
+            for qd, rp in zip(query_dicts, answer_parts)]

@@ -12,31 +12,34 @@ from ..geometry.vectors import Vec
 def parse_coordinates(text: str, dim: int) -> Vec | None:
     """Extract a coordinate vector from model output text.
 
+    Uses the LAST match to skip over intermediate reasoning/calculations.
+
     Looks for patterns like:
     - (1.0, 2.0, 3.0)
     - [1.0, 2.0, 3.0]
     - x=1.0, y=2.0, z=3.0
     - 1.0, 2.0, 3.0
     """
-    # Try parenthesized/bracketed tuple
-    pattern = r'[\(\[]?\s*(-?[\d]+\.?[\d]*)\s*[,\s]\s*(-?[\d]+\.?[\d]*)'
+    # Try parenthesized/bracketed tuple — use LAST match to skip reasoning
+    pattern = r'[\(\[]\s*(-?[\d]+\.?[\d]*)\s*,\s*(-?[\d]+\.?[\d]*)'
     if dim >= 3:
-        pattern += r'\s*[,\s]\s*(-?[\d]+\.?[\d]*)'
-    pattern += r'\s*[\)\]]?'
+        pattern += r'\s*,\s*(-?[\d]+\.?[\d]*)'
+    pattern += r'\s*[\)\]]'
 
-    match = re.search(pattern, text)
-    if match:
+    matches = list(re.finditer(pattern, text))
+    if matches:
+        match = matches[-1]  # last match = final answer
         coords = [float(match.group(i + 1)) for i in range(dim)]
         return np.array(coords, dtype=np.float64)
 
-    # Try x= y= z= format
+    # Try x= y= z= format (search from end)
     coord_labels = ["x", "y", "z", "w"][:dim]
     values = []
     for label in coord_labels:
         pat = rf'{label}\s*[=:]\s*(-?[\d]+\.?[\d]*)'
-        m = re.search(pat, text, re.IGNORECASE)
-        if m:
-            values.append(float(m.group(1)))
+        all_m = list(re.finditer(pat, text, re.IGNORECASE))
+        if all_m:
+            values.append(float(all_m[-1].group(1)))
     if len(values) == dim:
         return np.array(values, dtype=np.float64)
 
@@ -89,26 +92,55 @@ def parse_boolean(text: str, option_a: str, option_b: str) -> str | None:
     return None
 
 
+def _extract_answer_line(text: str, query_id: str) -> str | None:
+    """Extract the text after [Answer q_ID] if present."""
+    pattern = rf'\[Answer\s+{re.escape(query_id)}\]\s*(.+)'
+    m = re.search(pattern, text, re.IGNORECASE)
+    if m:
+        return m.group(1).strip()
+    return None
+
+
 def parse_model_response(text: str, query: dict) -> dict:
     """Parse a model response for a specific query.
+
+    Tries the structured [Answer q_ID] tag first, then falls back
+    to full-text extraction (using last match to skip reasoning).
 
     Returns dict with 'parsed_value' and 'parse_success'.
     """
     query_type = query["query_type"]
+    query_id = query.get("query_id", "")
+
+    # Try structured answer line first
+    answer_line = _extract_answer_line(text, query_id)
 
     match query_type:
         case "POSITION":
             dim = len(query["ground_truth"]) if isinstance(query["ground_truth"], list) else 3
-            val = parse_coordinates(text, dim)
+            # Try answer line first, then full text
+            val = None
+            if answer_line:
+                val = parse_coordinates(answer_line, dim)
+            if val is None:
+                val = parse_coordinates(text, dim)
             return {"parsed_value": val, "parse_success": val is not None}
 
         case "DISTANCE":
-            val = parse_distance(text)
+            val = None
+            if answer_line:
+                val = parse_distance(answer_line)
+            if val is None:
+                val = parse_distance(text)
             return {"parsed_value": val, "parse_success": val is not None}
 
         case "BOOLEAN":
             options = query["target_points"][1:]
-            val = parse_boolean(text, options[0], options[1])
+            val = None
+            if answer_line:
+                val = parse_boolean(answer_line, options[0], options[1])
+            if val is None:
+                val = parse_boolean(text, options[0], options[1])
             return {"parsed_value": val, "parse_success": val is not None}
 
         case _:
