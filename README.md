@@ -12,10 +12,10 @@ ZelusBench isolates **attention**, selective focus, sustained tracking, and adap
 2. [Geometric Primitives](#geometric-primitives)
 3. [Events (Transformations)](#events-transformations)
 4. [Scenario Structure](#scenario-structure)
-5. [Benchmark Dimensions](#benchmark-dimensions)
+5. [Benchmark Tasks](#benchmark-tasks)
 6. [Scoring & Metrics](#scoring--metrics)
 7. [Project Structure](#project-structure)
-8. [Kaggle Submission Format](#kaggle-submission-format)
+8. [Running on Kaggle](#running-on-kaggle)
 
 ---
 
@@ -40,7 +40,7 @@ This means the benchmark measures **attention**, not mathematical ability.
 
 ### Coordinate System
 
-All scenarios operate in **Cartesian space** of configurable dimensionality (2D, 3D, or 4D). The origin `O` is always implicitly defined at the zero vector. Angles use **degrees** in natural-language prompts; the engine works in radians internally.
+All scenarios operate in **Cartesian space** of configurable dimensionality (2D or 3D). The origin `O` is always implicitly defined at the zero vector. Angles use **degrees** in natural-language prompts; the engine works in radians internally.
 
 ### Point Definitions
 
@@ -110,80 +110,111 @@ Each scenario yields **multiple scored queries**, giving a granular performance 
 
 ---
 
-## Benchmark Dimensions
+## Benchmark Tasks
 
-The benchmark is parameterized across several independent axes. Each axis isolates a specific facet of attention. By varying one axis while holding others constant, we produce diagnostic profiles - not just a single aggregate score.
+ZelusBench is a suite of **8 Kaggle benchmark tasks**, each a standalone notebook in `tasks/`. Tasks are split into two categories: **isolated** (vary one attention axis, randomize everything else) and **combined** (all axes at a fixed difficulty tier).
 
-### 1. Chain Depth - *Sustained Attention*
+### Design Philosophy
 
-How many dependency hops lie between the origin and the queried point?
+Each isolated benchmark varies **only its target variable** while randomizing all other conditions (DAG structure, distractors, transforms, dimensionality, point definition types, coordinate ranges). This isolates the causal effect of each attention axis across diverse backgrounds rather than measuring it in one artificially uniform setup.
 
-| Level | Chain Depth | Example |
-|---|---|---|
-| Shallow | 1–3 | A → B → C (query C) |
-| Medium | 4–7 | A → B → C → D → E → F (query F) |
-| Deep | 8–15 | Long transitive chains |
+Queries are **depth-targeted**: every query in a benchmark must probe the exact difficulty level being tested (e.g., depth=8 queries target points at exactly chain depth 8).
 
-**Metric:** accuracy as a function of chain depth (expect degradation curve).
+### Isolated Benchmarks
 
-### 2. Distractor Density - *Selective Attention*
+#### 1. Sustained Attention — `sustained_attention.ipynb`
 
-How many irrelevant points and relationships are present relative to the relevant ones?
+Does accuracy degrade as dependency chains grow longer?
+
+| Depth | Example |
+|---|---|
+| 2 | A → B (query B) |
+| 4 | A → B → C → D (query D) |
+| 8 | 8-hop chain |
+| 16 | 16-hop chain |
+| 32 | 32-hop chain |
+
+Uses LINEAR structure to guarantee exact depth targeting. All other knobs (distractors, transforms, dim, point types) are randomized per scenario. 50 scenarios, ~150 queries.
+
+#### 2. Selective Attention — `selective_attention.ipynb`
+
+Does the model get distracted by irrelevant but salient information?
 
 | Level | Ratio (irrelevant : relevant) |
 |---|---|
 | Clean | 0:1 (no distractors) |
-| Low noise | 1:1 |
-| High noise | 3:1 |
-| Extreme noise | 10:1 |
+| Low | 1:1 |
+| High | 3:1 |
+| Extreme | 10:1 |
 
-**Metric:** accuracy drop from clean → noisy at fixed chain depth (the "distractor tax").
+Distractors include disconnected subgraphs, irrelevant branches, and restatements. Background (depth, structure, transforms, dim) randomized. 40 scenarios, ~120 queries.
 
-### 3. Transformation Count - *Attention Updating*
+#### 3. Attention Updating — `attention_updating.ipynb`
 
-How many events (rotations, translations, invalidations) occur before the query?
+Can the model update its representation after geometric transforms?
 
-| Level | Events |
+| Level | Transforms |
 |---|---|
 | Static | 0 |
-| Light | 1–2 |
-| Heavy | 3–5 |
-| Extreme | 6+ |
+| Light | 2 (rotation, translation) |
+| Heavy | 4 (+ reflection, scaling) |
+| Extreme | 7 (all types) |
 
-**Metric:** accuracy as a function of transformation count. Separately measured for each event type (rotations vs. invalidations may have very different costs).
+Background randomized. 40 scenarios, ~120 queries.
 
-### 4. Dimensionality - *Representational Load*
+#### 4. Structural Attention — `structural_attention.ipynb`
 
-| Level | Space |
+How does dependency graph topology affect accuracy?
+
+| Structure | Description |
 |---|---|
-| 2D | Flat plane |
-| 3D | Standard spatial |
-| 4D | Abstract high-dimensional |
-
-**Metric:** accuracy by dimensionality at fixed chain depth. Tests whether the model can maintain higher-dimensional state.
-
-### 5. Query Position - *Recency & Primacy Bias*
-
-Where in the sequence is the relevant information defined?
-
-| Position | Description |
-|---|---|
-| Recent | Queried point defined in the last block |
-| Early | Queried point defined in the first block |
-| Scattered | Dependencies spread across early, middle, and late blocks |
-
-**Metric:** accuracy by information position. Reveals primacy/recency bias in attention.
-
-### 6. DAG Complexity - *Structural Attention*
-
-| Level | Structure |
-|---|---|
-| Linear chain | A → B → C → D |
-| Branching | A → B, A → C, query involves both |
-| Merging | D = midpoint(B, C), then E from D |
+| Linear | A → B → C → D |
+| Branching | A → B, A → C (two branches from a common root) |
+| Merging | Two chains converge via midpoint |
 | Diamond | A → B, A → C, D = f(B, C) |
 
-**Metric:** accuracy by graph topology at fixed total node count.
+Background randomized. 40 scenarios, ~120 queries.
+
+#### 5. Dimensionality — `dimensionality.ipynb`
+
+Can the model maintain higher-dimensional state?
+
+| Dim | Space |
+|---|---|
+| 2D | Flat plane (x, y) |
+| 3D | Standard spatial (x, y, z) |
+
+Background randomized. 30 scenarios, ~90 queries.
+
+### Combined Benchmarks
+
+These test how multiple difficulty axes interact simultaneously.
+
+#### 6. Attention Simple — `attn_simple.ipynb`
+
+All knobs at minimum difficulty. Shallow chains (2-3), linear structure, no distractors, no transforms, 2D. Models should score near-perfectly. 15 scenarios, 45 queries.
+
+#### 7. Attention Medium — `attn_medium.ipynb`
+
+All knobs at moderate difficulty. Medium chains (5-8), branching/merging structures, low distractors, light transforms, 3D. 15 scenarios, 45 queries.
+
+#### 8. Attention Complex — `attn_complex.ipynb`
+
+All knobs at maximum difficulty. Deep chains (16-32), diamond DAG, extreme distractors, heavy/extreme transforms, 3D, all query and point types. Designed to be very challenging. 15 scenarios, 75 queries.
+
+### Total Coverage
+
+| Task | Scenarios | Queries |
+|---|---|---|
+| Sustained Attention | 50 | 150 |
+| Selective Attention | 40 | 120 |
+| Attention Updating | 40 | 120 |
+| Structural Attention | 40 | 120 |
+| Dimensionality | 30 | 90 |
+| Attention Simple | 15 | 45 |
+| Attention Medium | 15 | 45 |
+| Attention Complex | 15 | 75 |
+| **Total** | **245** | **765** |
 
 ---
 
@@ -203,16 +234,16 @@ Each query has a deterministic ground-truth answer (a coordinate vector or scala
 
 Relative error: `‖predicted - truth‖ / max(‖truth‖, ε)` where `ε` avoids division by zero near the origin.
 
-### Aggregate Reports
+### Diagnostic Profiles
 
 The benchmark produces **diagnostic profiles**, not a single leaderboard number:
 
-1. **Attention Decay Curve** - accuracy vs. chain depth (per dimensionality)
-2. **Distractor Robustness Score** - accuracy retention ratio (noisy / clean)
-3. **Transform Adaptation Score** - accuracy post-event vs. pre-event (per event type)
-4. **Positional Bias Map** - accuracy heatmap by where information appeared in the sequence
-5. **Topology Sensitivity** - accuracy by DAG structure
-6. **Overall ZelusBench Score** - weighted harmonic mean across all dimensions (for leaderboard)
+1. **Attention Decay Curve** — accuracy vs. chain depth (sustained attention)
+2. **Distractor Robustness Score** — accuracy retention ratio noisy/clean (selective attention)
+3. **Transform Adaptation Score** — accuracy drop from static baseline (attention updating)
+4. **Topology Sensitivity** — accuracy by DAG structure (structural attention)
+5. **Dimensionality Gap** — 2D vs. 3D accuracy delta
+6. **Combined Difficulty Curve** — simple → medium → complex progression
 
 ---
 
@@ -223,87 +254,90 @@ zelusbench/
 ├── README.md
 ├── pyproject.toml
 │
-├── zelusbench/
+├── zelusbench/                    # Core library (uploaded as Kaggle dataset)
 │   ├── __init__.py
 │   │
-│   ├── geometry/                  # Core geometric engine (source of truth)
+│   ├── geometry/                  # Geometric engine (source of truth)
 │   │   ├── __init__.py
-│   │   ├── point.py               # Point class, PointDefinition variants
-│   │   ├── space.py               # World state: resolves all points, tracks DAG
+│   │   ├── point.py               # PointDefinition: 7 definition types
+│   │   ├── space.py               # Space: dependency DAG, position resolution
 │   │   ├── transforms.py          # Rotation, translation, reflection, scaling
-│   │   └── vectors.py             # Vector math utilities (normalize, angle conversion, etc.)
+│   │   └── vectors.py             # Vector math utilities
 │   │
 │   ├── scenarios/                 # Scenario generation
 │   │   ├── __init__.py
-│   │   ├── generator.py           # ScenarioGenerator: builds randomized scenarios
-│   │   ├── config.py              # ScenarioConfig: all difficulty knobs
+│   │   ├── config.py              # ScenarioConfig: all difficulty knobs + randomize_except()
+│   │   ├── generator.py           # ScenarioGenerator: builds scenarios with depth-targeted queries
 │   │   ├── distractors.py         # Distractor injection strategies
 │   │   └── templates.py           # Natural language templates for statements/queries
 │   │
-│   ├── evaluation/                # Scoring & metrics
-│   │   ├── __init__.py
-│   │   ├── parser.py              # Extract coordinates from model output
-│   │   ├── scorer.py              # Compare predicted vs. ground truth
-│   │   └── reports.py             # Generate diagnostic profiles & plots
-│   │
-│   └── runner/                    # Benchmark execution
+│   └── evaluation/                # Scoring & metrics
 │       ├── __init__.py
-│       ├── runner.py              # Orchestrates scenario → prompt → model → score
-│       └── kaggle.py              # Kaggle-format dataset & submission generation
+│       ├── parser.py              # Extract coordinates/distances from model output
+│       ├── scorer.py              # Tiered scoring (EXACT/CLOSE/APPROXIMATE/WRONG)
+│       └── reports.py             # Diagnostic profiles across dimensions
 │
-├── tests/                         # Unit tests for geometry engine correctness
-│   ├── test_point.py
-│   ├── test_space.py
-│   ├── test_transforms.py
-│   └── test_scenarios.py
+├── tasks/                         # Kaggle benchmark notebooks (one per task)
+│   ├── sustained_attention.ipynb  # Chain depth: 2, 4, 8, 16, 32
+│   ├── selective_attention.ipynb  # Distractors: 0:1, 1:1, 3:1, 10:1
+│   ├── attention_updating.ipynb   # Transforms: 0, 2, 4, 7
+│   ├── structural_attention.ipynb # DAG: linear, branching, merging, diamond
+│   ├── dimensionality.ipynb       # Dim: 2D, 3D
+│   ├── attn_simple.ipynb          # Combined easy (baseline)
+│   ├── attn_medium.ipynb          # Combined medium
+│   └── attn_complex.ipynb         # Combined hard (stress test)
 │
-├── notebooks/
-│   └── analysis.ipynb             # Visualize benchmark results
-│
-└── data/                          # Generated benchmark datasets
-    ├── scenarios/                 # JSON scenario files
-    └── solutions/                 # Ground truth answers
+└── tests/                         # Unit tests (77 tests)
+    ├── test_point.py              # 21 tests: all point definition types
+    ├── test_space.py              # 12 tests: DAG, propagation, serialization
+    ├── test_transforms.py         # 13 tests: all transform types
+    └── test_scenarios.py          # 31 tests: generation, parsing, scoring, depth targeting
 ```
 
 ### Key Design Principles
 
-- **`Space` is the single source of truth.** It holds a DAG of `PointDefinition` objects and can resolve any point to an absolute coordinate at any time. All transforms mutate the `Space`. The engine's correctness is verified with unit tests - if the engine is correct, ground truth is correct.
-- **Scenarios are serializable.** A scenario is a JSON object containing the sequence of statements, events, and queries plus ground-truth answers. This is what gets published to Kaggle.
-- **Templates are swappable.** The same geometric scenario can be rendered into different natural language phrasings (formal vs. casual, verbose vs. terse) to control for prompt sensitivity.
+- **`Space` is the single source of truth.** It holds a DAG of `PointDefinition` objects and resolves any point to an absolute coordinate. All transforms mutate the `Space`. Engine correctness is verified with unit tests — if the engine is correct, ground truth is correct.
+- **Deterministic generation from seed.** Every scenario is fully reproducible from a `ScenarioConfig` + seed. No randomness at evaluation time.
+- **Depth-targeted queries.** When `query_target_depth` is set, all queries target points at exactly the specified chain depth. This ensures isolated benchmarks actually measure what they claim.
+- **Randomized backgrounds.** `ScenarioConfig.randomize_except()` generates diverse scenarios while pinning only the variable under test. This isolates causal effects across varied conditions.
+- **Temporal consistency.** The system prompt enforces chronological ordering — queries only reference points already defined, and transforms propagate to all subsequent references.
 
 ---
 
-## Kaggle Submission Format
+## Running on Kaggle
 
-### Published Dataset
+Each notebook in `tasks/` is a standalone Kaggle Benchmark task using the `kaggle_benchmarks` (kbench) library.
 
-Each row in `scenarios.csv`:
+### Setup
 
-| Column | Description |
-|---|---|
-| `scenario_id` | Unique scenario identifier |
-| `prompt` | Full multi-turn prompt text (all statements, events, and queries) |
-| `query_id` | Identifier for each query within the scenario |
-| `query_index` | Position of this query in the sequence (0-indexed) |
-| `dimension` | 2, 3, or 4 |
-| `chain_depth` | Dependency depth for this query |
-| `distractor_ratio` | Ratio of irrelevant to relevant points |
-| `num_transforms` | Number of events before this query |
-| `dag_structure` | `linear`, `branching`, `merging`, or `diamond` |
+1. Upload the `zelusbench/` package as a Kaggle dataset
+2. Each task notebook imports from the dataset and uses `@kbench.task` + `llm.prompt()`
+3. Each notebook ends with `%choose <task_name>` to register with the benchmark
 
-Ground truth answers are held back on a private test set.
+### Task Pattern
 
-### Submission Format
+```python
+@kbench.task(name="zelusbench_sustained_attention")
+def zelusbench_sustained_attention(llm) -> tuple[float, float]:
+    for depth in CHAIN_DEPTHS:
+        for seed in range(SEEDS):
+            cfg = ScenarioConfig.randomize_except(rng, pinned={...})
+            scenario = ScenarioGenerator(cfg).generate(scenario_id)
+            response = llm.prompt(scenario.prompt)
+            scores = score_response(response, scenario)
+    return overall_accuracy, std_dev
 
-```csv
-query_id,x,y,z,w
-q_001,3.0,4.0,0.0,
-q_002,1.5,-2.3,7.1,
-...
+zelusbench_sustained_attention.run(llm=kbench.llm)
 ```
 
-Coordinates are floats. Unused dimensions (e.g., `w` in 3D, `z` and `w` in 2D) are left blank.
+### Evaluation
 
-### Evaluation Metric
+Scoring is deterministic — no LLM judge needed. Each query is scored by relative error against the geometric ground truth:
 
-Public leaderboard uses the **Overall ZelusBench Score** (weighted harmonic mean across benchmark dimensions). The detailed diagnostic breakdown is available to participants for their own analysis.
+| Tier | Relative Error | Score |
+|---|---|---|
+| Exact | < 1% | 1.0 |
+| Close | < 5% | 0.7 |
+| Approximate | < 15% | 0.3 |
+| Wrong | ≥ 15% | 0.0 |
+| Refused | Unparseable | 0.0 |
