@@ -8,31 +8,10 @@ from enum import Enum, auto
 from typing import Any
 
 
-class DAGStructure(Enum):
-    LINEAR = auto()
-    BRANCHING = auto()
-    MERGING = auto()
-    DIAMOND = auto()
-
-
 class QueryType(Enum):
     POSITION = auto()      # "What is the position of X?"
     DISTANCE = auto()      # "What is the distance from X to Y?"
     BOOLEAN = auto()        # "Is X closer to Y or Z?"
-
-
-class DistractorLevel(Enum):
-    CLEAN = 0       # 0:1
-    LOW = 1         # 1:1
-    HIGH = 3        # 3:1
-    EXTREME = 10    # 10:1
-
-
-class TransformDensity(Enum):
-    STATIC = 0
-    LIGHT = 1       # 1-2
-    HEAVY = 3       # 3-5
-    EXTREME = 6     # 6+
 
 
 @dataclass
@@ -46,20 +25,19 @@ class ScenarioConfig:
     min_chain_depth: int = 3
     max_chain_depth: int = 7
 
-    # DAG topology
-    dag_structure: DAGStructure = DAGStructure.LINEAR
+    # Topology — probability of extending a leaf vs branching from any point
+    leaf_bias: float = 0.5  # 0.0=bushy/random, 1.0=always extend leaves (linear)
 
-    # Distractors (selective attention)
-    distractor_level: DistractorLevel = DistractorLevel.LOW
+    # Density — total points to generate (more = more noise)
+    num_points: int = 8
 
-    # Transforms (attention updating)
-    transform_density: TransformDensity = TransformDensity.LIGHT
+    # Transforms — probability each step triggers a transform
+    transform_prob: float = 0.1  # 0.0=static, higher=more transforms
     transform_types: list[str] = field(default_factory=lambda: ["rotation", "translation"])
 
     # Query configuration
     query_types: list[QueryType] = field(default_factory=lambda: [QueryType.POSITION, QueryType.DISTANCE])
     num_queries: int = 3
-    num_splits: int = 3  # number of statement blocks between queries
 
     # Point definition types to use
     point_def_types: list[str] = field(default_factory=lambda: [
@@ -80,22 +58,6 @@ class ScenarioConfig:
     # Seed for reproducibility
     seed: int | None = None
 
-    @property
-    def distractor_ratio(self) -> int:
-        return self.distractor_level.value
-
-    @property
-    def num_transforms(self) -> int:
-        match self.transform_density:
-            case TransformDensity.STATIC:
-                return 0
-            case TransformDensity.LIGHT:
-                return 2
-            case TransformDensity.HEAVY:
-                return 4
-            case TransformDensity.EXTREME:
-                return 7
-
     @classmethod
     def randomize_except(
         cls,
@@ -115,17 +77,22 @@ class ScenarioConfig:
         if max_depth < min_depth:
             max_depth = min_depth
 
-        dag = pinned.get("dag_structure",
-                         rng.choice(list(DAGStructure)))
-        dist = pinned.get("distractor_level",
-                          rng.choice(list(DistractorLevel)))
-        td = pinned.get("transform_density",
-                        rng.choice(list(TransformDensity)))
+        leaf_bias = pinned.get("leaf_bias",
+                               rng.choice([0.0, 0.25, 0.5, 0.75, 1.0]))
 
-        # Transform types scale with density
-        if td == TransformDensity.STATIC:
+        # num_points scales with depth — deeper chains need more points
+        point_brackets = {(2, 3): (4, 8), (4, 6): (6, 12),
+                          (7, 10): (10, 20), (12, 16): (15, 30)}
+        pt_lo, pt_hi = point_brackets.get((lo, hi), (6, 15))
+        num_points = pinned.get("num_points", rng.randint(pt_lo, pt_hi))
+
+        transform_prob = pinned.get("transform_prob",
+                                    rng.choice([0.0, 0.05, 0.1, 0.15, 0.2]))
+
+        # Transform types scale with probability
+        if transform_prob == 0.0:
             tt = []
-        elif td in (TransformDensity.LIGHT,):
+        elif transform_prob <= 0.1:
             tt = ["rotation", "translation"]
         else:
             tt = ["rotation", "translation", "reflection", "scaling"]
@@ -160,19 +127,17 @@ class ScenarioConfig:
         mmax = pinned.get("magnitude_max", mmax)
 
         nq = pinned.get("num_queries", rng.choice([2, 3, 4]))
-        ns = pinned.get("num_splits", min(max_depth, 5))
 
         return cls(
             dim=dim,
             min_chain_depth=min_depth,
             max_chain_depth=max_depth,
-            dag_structure=dag,
-            distractor_level=dist,
-            transform_density=td,
+            leaf_bias=leaf_bias,
+            num_points=num_points,
+            transform_prob=transform_prob,
             transform_types=tt,
             query_types=qt,
             num_queries=nq,
-            num_splits=ns,
             point_def_types=pdt,
             coord_min=cmin,
             coord_max=cmax,
@@ -189,10 +154,8 @@ class ScenarioConfig:
 def easy_config(**overrides) -> ScenarioConfig:
     defaults = dict(
         dim=2, min_chain_depth=2, max_chain_depth=3,
-        dag_structure=DAGStructure.LINEAR,
-        distractor_level=DistractorLevel.CLEAN,
-        transform_density=TransformDensity.STATIC,
-        num_queries=2, num_splits=2,
+        leaf_bias=1.0, num_points=4, transform_prob=0.0,
+        num_queries=2,
     )
     defaults.update(overrides)
     return ScenarioConfig(**defaults)
@@ -201,10 +164,8 @@ def easy_config(**overrides) -> ScenarioConfig:
 def medium_config(**overrides) -> ScenarioConfig:
     defaults = dict(
         dim=3, min_chain_depth=4, max_chain_depth=7,
-        dag_structure=DAGStructure.BRANCHING,
-        distractor_level=DistractorLevel.LOW,
-        transform_density=TransformDensity.LIGHT,
-        num_queries=3, num_splits=3,
+        leaf_bias=0.7, num_points=10, transform_prob=0.1,
+        num_queries=3,
     )
     defaults.update(overrides)
     return ScenarioConfig(**defaults)
@@ -213,10 +174,8 @@ def medium_config(**overrides) -> ScenarioConfig:
 def hard_config(**overrides) -> ScenarioConfig:
     defaults = dict(
         dim=3, min_chain_depth=7, max_chain_depth=12,
-        dag_structure=DAGStructure.DIAMOND,
-        distractor_level=DistractorLevel.HIGH,
-        transform_density=TransformDensity.HEAVY,
-        num_queries=5, num_splits=4,
+        leaf_bias=0.3, num_points=20, transform_prob=0.2,
+        num_queries=5,
         transform_types=["rotation", "translation", "reflection", "scaling"],
     )
     defaults.update(overrides)

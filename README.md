@@ -2,16 +2,16 @@
 
 > A geometric benchmark for measuring LLM attention through deterministic spatial reasoning tasks.
 
-ZelusBench isolates **attention**, selective focus, sustained tracking, and adaptive updating, from raw reasoning ability. The geometric operations at each step are simple; the challenge is maintaining an accurate internal representation across long, noisy, and disrupted sequences.
+ZelusBench isolates **attention** — selective focus, sustained tracking, and adaptive updating — from raw reasoning ability. The geometric operations at each step are simple; the challenge is maintaining an accurate internal representation across long, noisy, and disrupted sequences.
 
 ---
 
 ## Table of Contents
 
 1. [Core Idea](#core-idea)
-2. [Geometric Primitives](#geometric-primitives)
-3. [Events (Transformations)](#events-transformations)
-4. [Scenario Structure](#scenario-structure)
+2. [Generative Scenario Construction](#generative-scenario-construction)
+3. [Geometric Primitives](#geometric-primitives)
+4. [Events (Transformations)](#events-transformations)
 5. [Benchmark Tasks](#benchmark-tasks)
 6. [Scoring & Metrics](#scoring--metrics)
 7. [Project Structure](#project-structure)
@@ -23,16 +23,75 @@ ZelusBench isolates **attention**, selective focus, sustained tracking, and adap
 
 A scenario is a **sequence of statements and queries** presented to the model in natural language. Statements either define points (relative to other points) or apply transformations to the space. Queries ask the model to report computed positions, distances, or relationships.
 
-Because every point is defined relative to others via explicit geometric operations, the ground-truth answer is always **deterministically computable**. No LLM judge is needed, we compare numerical outputs against exact solutions (within a tolerance).
+Because every point is defined relative to others via explicit geometric operations, the ground-truth answer is always **deterministically computable**. No LLM judge is needed — we compare numerical outputs against exact solutions (within a tolerance).
 
 The key insight: **the math at each step is trivial** (vector addition, rotation matrices, midpoints). What makes the task hard is:
 
 - Tracking a growing graph of dependencies across a long prompt
-- Ignoring irrelevant points and relationships (distractors)
-- Updating the entire representation when a transformation or invalidation occurs
-- Switching between reference frames
+- Ignoring irrelevant points and relationships
+- Updating the entire representation when a transformation occurs
+- Maintaining accuracy as dimensionality and chain depth increase
 
 This means the benchmark measures **attention**, not mathematical ability.
+
+---
+
+## Generative Scenario Construction
+
+Scenarios are built by a **single generative loop**, not pre-planned upfront. At each step, the generator either:
+
+1. **Adds a point** — defined relative to an existing point (or set of points via midpoint/centroid)
+2. **Applies a transform** — rotates, translates, reflects, or scales existing points
+3. **Emits a query** — asks about a position, distance, or boolean relationship
+
+Every point is real — there is no separate "distractor" concept. Points that don't matter for a query are simply points the model must track but doesn't need for the answer.
+
+### Configuration Parameters
+
+Three continuous knobs control difficulty:
+
+| Parameter | Range | Effect |
+|---|---|---|
+| **`leaf_bias`** | 0.0 – 1.0 | Controls graph topology. `1.0` = always extend leaf nodes (linear chains). `0.0` = branch from any point (bushy/diamond graphs). |
+| **`num_points`** | 4 – 40+ | Total points generated. More points = more irrelevant information to filter through. |
+| **`transform_prob`** | 0.0 – 1.0 | Probability each step triggers a transform instead of adding a point. `0.0` = static space. `0.2` = ~20% of steps are transforms. |
+
+Additional config: `dim` (2D/3D), `min/max_chain_depth`, `transform_types`, `query_types`, `point_def_types`, coordinate/magnitude ranges.
+
+### Generation Phases
+
+```
+Phase 1 (depth ramp):    Force linear growth until min_chain_depth is reached.
+Phase 2 (generative):    Add points (via leaf_bias) and transforms (via transform_prob).
+Phase 3 (queries):       Emit all remaining queries targeting deep/specific points.
+```
+
+### Example Prompt
+
+```
+Process the following 3D spatial reasoning scenario. Statements are chronological — propagate all transformations before answering.
+Format: [Answer q_ID] value — e.g. [Answer q_001] (0.0, 0.0, 0.0) or [Answer q_002] 5.385 or [Answer q_003] B
+
+---
+
+Point A is 1.8 units from Point O at angle 267 degrees.
+Point B is 1.7 units from Point A at angle 267 degrees.
+Point C is at offset (-3.1, -1.9, 0.0) from Point B.
+Point D is 5.5 units from Point C at angle 196 degrees.
+Point E is 3.4 units from Point A in the direction (-0.3, -0.9, 1.4).
+Rotate Point C, Point E by 120 degrees around center (0.0, 0.0, 0.0) around the axis (1.0, 0.0, 0.0).
+Point F is at offset (0.3, 2.2, 0.8) from Point D.
+
+[Query q_000] Distance from C to B?
+Point G is 7.9 units from Point E at angle 308 degrees.
+Point H is 2.1 units from Point G at angle 128 degrees.
+
+[Query q_001] Distance from H to F?
+Point I is the weighted centroid of Point D (weight 0.3), Point B (weight 0.9), Point H (weight 0.7), Point F (weight 0.3).
+Point J is 3.8 units from Point A in the direction (2.1, 0.8, -1.6).
+
+[Query q_002] Position of F? (x, y, z)
+```
 
 ---
 
@@ -56,76 +115,44 @@ Every point (except the origin) is defined relative to one or more existing poin
 | **Weighted centroid** | *"Point E is the centroid of A (weight 2), B (weight 1)."* | `target = weighted_mean(points, weights)` |
 | **Projection** | *"Point F is the projection of C onto line AB."* | `target = A + dot(C-A, B-A)/dot(B-A, B-A) * (B-A)` |
 
-### Distractor Points
-
-Some points exist only to create noise. They are real points with valid definitions — they just don't matter for any query. They may:
-
-- Belong to a **disconnected subgraph** (defined relative to each other but never queried and never connected to queried points)
-- Be **on the dependency chain** but irrelevant to the specific query (e.g., query asks about Z, and M branches off from C but Z doesn't depend on M)
-
 ---
 
 ## Events (Transformations)
 
-Events mutate the geometric state mid-scenario. They are the primary mechanism for testing **attention updating** - the model must propagate changes through its internal representation.
+Events mutate the geometric state mid-scenario. They are the primary mechanism for testing **attention updating** — the model must propagate changes through its internal representation.
 
 | Event | Description | Parameters |
 |---|---|---|
-| **Rotation** | Rotate a subset of points around an axis through a given center. | `points: list`, `axis: vec`, `center: vec`, `angle: float` |
-| **Translation** | Shift a subset of points by a displacement vector. | `points: list`, `displacement: vec` |
-| **Reflection** | Reflect a subset of points across a plane (3D) or line (2D). | `points: list`, `plane_normal: vec`, `plane_point: vec` |
-| **Scaling** | Scale distances of a subset of points from a center. | `points: list`, `center: vec`, `factor: float` |
-| **Invalidation** | Redefine a point entirely. All downstream dependents must update. | `point: str`, `new_definition: PointDefinition` |
-| **Frame shift** | Change the reference frame: "From now on, describe everything relative to Point B." | `new_origin: str` |
+| **Rotation** | Rotate a subset of points around an axis through a given center. | `points`, `axis`, `center`, `angle` |
+| **Translation** | Shift a subset of points by a displacement vector. | `points`, `displacement` |
+| **Reflection** | Reflect a subset of points across a plane (3D) or line (2D). | `points`, `plane_normal`, `plane_point` |
+| **Scaling** | Scale distances of a subset of points from a center. | `points`, `center`, `factor` |
+
+Transforms are generated probabilistically during the generative loop (controlled by `transform_prob`). They only target points that already exist — no forward references.
 
 ### Propagation Rules
 
-When a point is invalidated or transformed, all points **defined relative to it** must also update. The engine tracks a dependency DAG and propagates changes correctly. The model is expected to do the same.
-
----
-
-## Scenario Structure
-
-A scenario is not a single prompt-response pair. It is an **interleaved sequence** of statements and queries, simulating a long evolving conversation.
-
-```
-┌─────────────────────────────────────┐
-│ System: task instructions           │
-├─────────────────────────────────────┤
-│ Statement Block 1: define A, B, C   │
-│ Query 1: "What is B's position?"    │  ← checkpoint (easy)
-│ Statement Block 2: define D, E, F   │
-│ Distractor Block: define X, Y       │
-│ Query 2: "Distance from A to F?"    │  ← sustained tracking
-│ Event: rotate all points 90° on Z   │
-│ Query 3: "What is B's position now?"│  ← post-transform update
-│ Event: invalidate C                 │
-│ Query 4: "What is F's position?"    │  ← DAG propagation 
-│ ...                                 │
-└─────────────────────────────────────┘
-```
-
-Each scenario yields **multiple scored queries**, giving a granular performance trace.
+When a point is transformed, all points **defined relative to it** must also update. The engine tracks a dependency DAG and propagates changes correctly. The model is expected to do the same.
 
 ---
 
 ## Benchmark Tasks
 
-ZelusBench is a suite of **18 Kaggle benchmark tasks**, each a standalone notebook in `tasks/`. Tasks are split into two categories: **isolated** (vary one attention axis, randomize everything else) and **combined** (all axes at a fixed difficulty tier). Each level of each axis is its own task, enabling fine-grained leaderboard comparison.
+ZelusBench is a suite of **18 Kaggle benchmark tasks**, each a standalone notebook in `tasks/`. Tasks are split into two categories: **isolated** (vary one axis, randomize everything else) and **combined** (all axes at a fixed difficulty tier).
 
 ### Design Philosophy
 
-Each isolated benchmark varies **only its target variable** while randomizing all other conditions (DAG structure, distractors, transforms, dimensionality, point definition types, coordinate ranges). This isolates the causal effect of each attention axis across diverse backgrounds rather than measuring it in one artificially uniform setup.
+Each isolated benchmark varies **only its target variable** while randomizing all other conditions via `ScenarioConfig.randomize_except()`. This isolates the causal effect of each attention axis across diverse backgrounds.
 
-Queries are **depth-targeted**: every query in a benchmark must probe the exact difficulty level being tested (e.g., depth=8 queries target points at exactly chain depth 8).
+Queries are **depth-targeted**: when testing sustained attention, every query targets points at exactly the specified chain depth.
 
-Backgrounds are **deterministic across levels**: within a category (e.g., sustained attention), the same seed index produces the same randomized background (dim, distractors, transforms, point types) regardless of the target level. This ensures fair comparison — the only thing that changes between short/medium/long is the chain depth.
+Backgrounds are **deterministic across levels**: within a category, the same seed index produces the same randomized background regardless of the target level.
 
 ### Isolated Benchmarks
 
 #### 1. Sustained Attention (3 tasks)
 
-Does accuracy degrade as dependency chains grow longer? Uses LINEAR structure to guarantee exact depth targeting. All other knobs randomized per scenario.
+Does accuracy degrade as dependency chains grow longer? Pins `leaf_bias=1.0` and `query_target_depth` for exact depth targeting.
 
 | Task | Notebook | Depths | Seeds | Scenarios |
 |---|---|---|---|---|
@@ -135,38 +162,38 @@ Does accuracy degrade as dependency chains grow longer? Uses LINEAR structure to
 
 #### 2. Selective Attention (3 tasks)
 
-Does the model get distracted by irrelevant but salient information? Distractors include disconnected subgraphs, irrelevant branches, and restatements.
+Can the model filter irrelevant points? Pins `num_points` — more points means more noise.
 
-| Task | Notebook | Distractor Level | Seeds | Scenarios |
+| Task | Notebook | `num_points` | Seeds | Scenarios |
 |---|---|---|---|---|
-| `attn_selective_clean` | `attn_selective_clean.ipynb` | CLEAN (0:1) | 15 | 15 |
-| `attn_selective_noisy` | `attn_selective_noisy.ipynb` | HIGH (3:1) | 15 | 15 |
-| `attn_selective_saturated` | `attn_selective_saturated.ipynb` | EXTREME (10:1) | 15 | 15 |
+| `attn_selective_clean` | `attn_selective_clean.ipynb` | 4 (minimal) | 15 | 15 |
+| `attn_selective_noisy` | `attn_selective_noisy.ipynb` | 15 (moderate) | 15 | 15 |
+| `attn_selective_saturated` | `attn_selective_saturated.ipynb` | 40 (dense) | 15 | 15 |
 
 #### 3. Attention Updating (3 tasks)
 
-Can the model update its representation after geometric transforms?
+Can the model propagate transforms through its representation? Pins `transform_prob`.
 
-| Task | Notebook | Transform Density | Seeds | Scenarios |
+| Task | Notebook | `transform_prob` | Seeds | Scenarios |
 |---|---|---|---|---|
-| `attn_updating_static` | `attn_updating_static.ipynb` | STATIC (0 transforms) | 15 | 15 |
-| `attn_updating_light` | `attn_updating_light.ipynb` | LIGHT (2 transforms) | 15 | 15 |
-| `attn_updating_heavy` | `attn_updating_heavy.ipynb` | EXTREME (7 transforms) | 15 | 15 |
+| `attn_updating_static` | `attn_updating_static.ipynb` | 0.0 (no transforms) | 15 | 15 |
+| `attn_updating_light` | `attn_updating_light.ipynb` | 0.1 (~10% steps) | 15 | 15 |
+| `attn_updating_heavy` | `attn_updating_heavy.ipynb` | 0.25 (~25% steps) | 15 | 15 |
 
 #### 4. Structural Attention (4 tasks)
 
-How does dependency graph topology affect accuracy?
+How does dependency graph topology affect accuracy? Pins `leaf_bias`.
 
-| Task | Notebook | DAG Structure | Seeds | Scenarios |
-|---|---|---|---|---|
-| `attn_structural_linear` | `attn_structural_linear.ipynb` | LINEAR | 15 | 15 |
-| `attn_structural_branching` | `attn_structural_branching.ipynb` | BRANCHING | 15 | 15 |
-| `attn_structural_merging` | `attn_structural_merging.ipynb` | MERGING | 15 | 15 |
-| `attn_structural_diamond` | `attn_structural_diamond.ipynb` | DIAMOND | 15 | 15 |
+| Task | Notebook | `leaf_bias` | Topology | Seeds | Scenarios |
+|---|---|---|---|---|---|
+| `attn_structural_linear` | `attn_structural_linear.ipynb` | 1.0 | Pure chain extension | 15 | 15 |
+| `attn_structural_branching` | `attn_structural_branching.ipynb` | 0.5 | Even mix | 15 | 15 |
+| `attn_structural_merging` | `attn_structural_merging.ipynb` | 0.25 | Mostly internal anchors | 15 | 15 |
+| `attn_structural_diamond` | `attn_structural_diamond.ipynb` | 0.0 | Pure random anchor (bushy) | 15 | 15 |
 
 #### 5. Dimensionality (2 tasks)
 
-Can the model maintain higher-dimensional state?
+Can the model maintain higher-dimensional state? Pins `dim`.
 
 | Task | Notebook | Dim | Seeds | Scenarios |
 |---|---|---|---|---|
@@ -175,13 +202,13 @@ Can the model maintain higher-dimensional state?
 
 ### Combined Benchmarks (3 tasks)
 
-These test how multiple difficulty axes interact simultaneously. All knobs are set to the same tier.
+All knobs set to the same difficulty tier simultaneously.
 
-| Task | Notebook | Depth | Structure | Distractors | Transforms | Dim | Seeds | Scenarios | Queries |
-|---|---|---|---|---|---|---|---|---|---|
-| `attn_simple` | `attn_simple.ipynb` | 2–3 | LINEAR | CLEAN | STATIC | 2D | 15 | 15 | 45 |
-| `attn_medium` | `attn_medium.ipynb` | 5–8 | BRANCHING/MERGING | LOW | LIGHT | 3D | 15 | 15 | 45 |
-| `attn_complex` | `attn_complex.ipynb` | 16–32 | DIAMOND | EXTREME | HEAVY/EXTREME | 3D | 15 | 15 | 75 |
+| Task | Notebook | Depth | `leaf_bias` | `num_points` | `transform_prob` | Dim | Seeds | Queries |
+|---|---|---|---|---|---|---|---|---|
+| `attn_simple` | `attn_simple.ipynb` | 2–3 | 1.0 | 4 | 0.0 | 2D | 15 | 45 |
+| `attn_medium` | `attn_medium.ipynb` | 5–8 | 0.5 | 12 | 0.1 | 3D | 15 | 45 |
+| `attn_complex` | `attn_complex.ipynb` | 16–32 | 0.25 | 30 | 0.2 | 3D | 15 | 75 |
 
 ### Total Coverage
 
@@ -213,14 +240,26 @@ Each query has a deterministic ground-truth answer (a coordinate vector or scala
 
 Relative error: `‖predicted - truth‖ / max(‖truth‖, ε)` where `ε` avoids division by zero near the origin.
 
+### Response Format
+
+Models are instructed to wrap each answer with a structured tag:
+
+```
+[Answer q_000] (3.0, -1.5, 2.0)
+[Answer q_001] 5.385
+[Answer q_002] B
+```
+
+The parser tries `[Answer q_ID]` first, falls back to `[Query q_ID]` splitting, then full-text extraction (using the last match to skip reasoning chain-of-thought).
+
 ### Diagnostic Profiles
 
 The benchmark produces **diagnostic profiles**, not a single leaderboard number:
 
 1. **Attention Decay Curve** — accuracy vs. chain depth (sustained attention)
-2. **Distractor Robustness Score** — accuracy retention ratio noisy/clean (selective attention)
-3. **Transform Adaptation Score** — accuracy drop from static baseline (attention updating)
-4. **Topology Sensitivity** — accuracy by DAG structure (structural attention)
+2. **Density Robustness** — accuracy vs. num_points (selective attention)
+3. **Transform Adaptation** — accuracy vs. transform_prob (attention updating)
+4. **Topology Sensitivity** — accuracy vs. leaf_bias (structural attention)
 5. **Dimensionality Gap** — 2D vs. 3D accuracy delta
 6. **Combined Difficulty Curve** — simple → medium → complex progression
 
@@ -243,11 +282,10 @@ zelusbench/
 │   │   ├── transforms.py          # Rotation, translation, reflection, scaling
 │   │   └── vectors.py             # Vector math utilities
 │   │
-│   ├── scenarios/                 # Scenario generation
+│   ├── scenarios/                 # Generative scenario construction
 │   │   ├── __init__.py
-│   │   ├── config.py              # ScenarioConfig: all difficulty knobs + randomize_except()
-│   │   ├── generator.py           # ScenarioGenerator: builds scenarios with depth-targeted queries
-│   │   ├── distractors.py         # Distractor injection strategies
+│   │   ├── config.py              # ScenarioConfig: leaf_bias, num_points, transform_prob
+│   │   ├── generator.py           # ScenarioGenerator: step-by-step generative loop
 │   │   └── templates.py           # Natural language templates for statements/queries
 │   │
 │   └── evaluation/                # Scoring & metrics
@@ -263,21 +301,21 @@ zelusbench/
 │   ├── attn_sustained_medium.ipynb    # Depths 8, 9, 10
 │   ├── attn_sustained_long.ipynb      # Depths 16, 18, 20
 │   │
-│   │  # Selective Attention (distractors)
-│   ├── attn_selective_clean.ipynb     # CLEAN (0:1 ratio)
-│   ├── attn_selective_noisy.ipynb     # HIGH (3:1 ratio)
-│   ├── attn_selective_saturated.ipynb # EXTREME (10:1 ratio)
+│   │  # Selective Attention (num_points)
+│   ├── attn_selective_clean.ipynb     # 4 points
+│   ├── attn_selective_noisy.ipynb     # 15 points
+│   ├── attn_selective_saturated.ipynb # 40 points
 │   │
-│   │  # Attention Updating (transforms)
-│   ├── attn_updating_static.ipynb     # STATIC (0 transforms)
-│   ├── attn_updating_light.ipynb      # LIGHT (2 transforms)
-│   ├── attn_updating_heavy.ipynb      # EXTREME (7 transforms)
+│   │  # Attention Updating (transform_prob)
+│   ├── attn_updating_static.ipynb     # 0.0 (no transforms)
+│   ├── attn_updating_light.ipynb      # 0.1
+│   ├── attn_updating_heavy.ipynb      # 0.25
 │   │
-│   │  # Structural Attention (DAG topology)
-│   ├── attn_structural_linear.ipynb   # LINEAR
-│   ├── attn_structural_branching.ipynb# BRANCHING
-│   ├── attn_structural_merging.ipynb  # MERGING
-│   ├── attn_structural_diamond.ipynb  # DIAMOND
+│   │  # Structural Attention (leaf_bias)
+│   ├── attn_structural_linear.ipynb   # 1.0 (linear)
+│   ├── attn_structural_branching.ipynb# 0.5 (mixed)
+│   ├── attn_structural_merging.ipynb  # 0.25 (bushy)
+│   ├── attn_structural_diamond.ipynb  # 0.0 (random anchor)
 │   │
 │   │  # Dimensionality
 │   ├── attn_dim_2.ipynb               # 2D
@@ -288,20 +326,21 @@ zelusbench/
 │   ├── attn_medium.ipynb              # All moderate
 │   └── attn_complex.ipynb             # All hard (stress test)
 │
-└── tests/                         # Unit tests (77 tests)
+└── tests/                         # Unit tests (79 tests)
     ├── test_point.py              # 21 tests: all point definition types
     ├── test_space.py              # 12 tests: DAG, propagation, serialization
     ├── test_transforms.py         # 13 tests: all transform types
-    └── test_scenarios.py          # 31 tests: generation, parsing, scoring, depth targeting
+    └── test_scenarios.py          # 33 tests: generation, parsing, scoring, depth targeting
 ```
 
 ### Key Design Principles
 
 - **`Space` is the single source of truth.** It holds a DAG of `PointDefinition` objects and resolves any point to an absolute coordinate. All transforms mutate the `Space`. Engine correctness is verified with unit tests — if the engine is correct, ground truth is correct.
+- **Single generative loop.** Scenarios are built step-by-step — each point, transform, and query is generated inline using only points that already exist. No forward references, no separate "distractor" concept.
+- **Continuous difficulty knobs.** Topology (`leaf_bias`), density (`num_points`), and dynamism (`transform_prob`) are continuous parameters, not discrete categories. This enables smooth difficulty curves.
 - **Deterministic generation from seed.** Every scenario is fully reproducible from a `ScenarioConfig` + seed. No randomness at evaluation time.
-- **Depth-targeted queries.** When `query_target_depth` is set, all queries target points at exactly the specified chain depth. This ensures isolated benchmarks actually measure what they claim.
-- **Randomized backgrounds.** `ScenarioConfig.randomize_except()` generates diverse scenarios while pinning only the variable under test. This isolates causal effects across varied conditions.
-- **Temporal consistency.** The system prompt enforces chronological ordering — queries only reference points already defined, and transforms propagate to all subsequent references.
+- **Depth-targeted queries.** When `query_target_depth` is set, all queries target points at exactly the specified chain depth.
+- **Randomized backgrounds.** `ScenarioConfig.randomize_except()` generates diverse scenarios while pinning only the variable under test.
 
 ---
 
@@ -322,11 +361,11 @@ Each notebook in `tasks/` is a standalone Kaggle Benchmark task using the `kaggl
 def zelusbench_attn_sustained_short(llm) -> tuple[float, float]:
     for depth in CHAIN_DEPTHS:       # e.g., [2, 3, 4]
         for i in range(SEEDS):
-            rng = random.Random(i * 7919)  # deterministic background
-            cfg = ScenarioConfig.randomize_except(rng, pinned={
+            bg_rng = random.Random(i * 7919)  # deterministic background
+            cfg = ScenarioConfig.randomize_except(bg_rng, pinned={
                 "min_chain_depth": depth, "max_chain_depth": depth,
-                "dag_structure": DAGStructure.LINEAR,
-                "query_target_depth": depth, "seed": seed,
+                "leaf_bias": 1.0,
+                "query_target_depth": depth, "seed": depth * 1000 + i,
             })
             scenario = ScenarioGenerator(cfg).generate(scenario_id)
             response = llm.prompt(scenario.prompt)

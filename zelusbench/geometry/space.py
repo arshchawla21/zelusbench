@@ -107,6 +107,15 @@ class Space:
                     stack.extend(self._definitions[dep].dependency_names())
         return all_deps
 
+    def non_origin_points(self) -> list[str]:
+        """All defined points except origin, in definition order."""
+        return [n for n in self._definition_order if n != "O"]
+
+    def leaf_nodes(self) -> list[str]:
+        """Points with no dependents (leaf nodes), excluding origin."""
+        return [n for n in self._definition_order
+                if n != "O" and not self._children.get(n)]
+
     def chain_depth(self, name: str) -> int:
         """Number of dependency hops from origin to this point."""
         if name == "O":

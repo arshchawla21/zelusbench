@@ -20,8 +20,8 @@ class DiagnosticProfile:
     # 1. Attention Decay Curve: accuracy vs chain depth
     accuracy_by_depth: dict[int, float] = field(default_factory=dict)
 
-    # 2. Distractor Robustness: accuracy at each distractor level
-    accuracy_by_distractor_ratio: dict[int, float] = field(default_factory=dict)
+    # 2. Density Robustness: accuracy by number of points
+    accuracy_by_num_points: dict[int, float] = field(default_factory=dict)
 
     # 3. Transform Adaptation: accuracy by transform count
     accuracy_by_transform_count: dict[int, float] = field(default_factory=dict)
@@ -29,8 +29,8 @@ class DiagnosticProfile:
     # 4. Positional Bias: accuracy by query position in sequence
     accuracy_by_query_position: dict[int, float] = field(default_factory=dict)
 
-    # 5. Topology Sensitivity: accuracy by DAG structure
-    accuracy_by_dag_structure: dict[str, float] = field(default_factory=dict)
+    # 5. Topology Sensitivity: accuracy by leaf bias
+    accuracy_by_leaf_bias: dict[float, float] = field(default_factory=dict)
 
     # 6. Dimensionality: accuracy by spatial dimension
     accuracy_by_dim: dict[int, float] = field(default_factory=dict)
@@ -41,10 +41,10 @@ class DiagnosticProfile:
     def to_dict(self) -> dict:
         return {
             "accuracy_by_depth": self.accuracy_by_depth,
-            "accuracy_by_distractor_ratio": self.accuracy_by_distractor_ratio,
+            "accuracy_by_num_points": self.accuracy_by_num_points,
             "accuracy_by_transform_count": self.accuracy_by_transform_count,
             "accuracy_by_query_position": self.accuracy_by_query_position,
-            "accuracy_by_dag_structure": self.accuracy_by_dag_structure,
+            "accuracy_by_leaf_bias": self.accuracy_by_leaf_bias,
             "accuracy_by_dim": self.accuracy_by_dim,
             "overall_score": self.overall_score,
             "num_queries": len(self.all_scores),
@@ -92,13 +92,13 @@ def build_diagnostic_profile(
         by_depth[sd["chain_depth"]].append(sd)
     profile.accuracy_by_depth = {d: _mean_score(ss) for d, ss in sorted(by_depth.items())}
 
-    # 2. Accuracy by distractor ratio (from scenario metadata)
-    by_distractor: dict[int, list[dict]] = defaultdict(list)
+    # 2. Accuracy by num_points (from scenario metadata)
+    by_num_points: dict[int, list[dict]] = defaultdict(list)
     for sd, meta in _zip_scores_metadata(score_dicts, scenario_metadata):
-        ratio = meta.get("distractor_ratio", 0)
-        by_distractor[ratio].append(sd)
-    profile.accuracy_by_distractor_ratio = {
-        d: _mean_score(ss) for d, ss in sorted(by_distractor.items())
+        np_val = meta.get("num_points", 0)
+        by_num_points[np_val].append(sd)
+    profile.accuracy_by_num_points = {
+        d: _mean_score(ss) for d, ss in sorted(by_num_points.items())
     }
 
     # 3. Accuracy by transform count
@@ -118,12 +118,12 @@ def build_diagnostic_profile(
         d: _mean_score(ss) for d, ss in sorted(by_position.items())
     }
 
-    # 5. Accuracy by DAG structure
-    by_dag: dict[str, list[dict]] = defaultdict(list)
+    # 5. Accuracy by leaf bias
+    by_lb: dict[float, list[dict]] = defaultdict(list)
     for sd, meta in _zip_scores_metadata(score_dicts, scenario_metadata):
-        structure = meta.get("dag_structure", "UNKNOWN")
-        by_dag[structure].append(sd)
-    profile.accuracy_by_dag_structure = {d: _mean_score(ss) for d, ss in sorted(by_dag.items())}
+        lb = meta.get("leaf_bias", 0.5)
+        by_lb[round(lb, 2)].append(sd)
+    profile.accuracy_by_leaf_bias = {d: _mean_score(ss) for d, ss in sorted(by_lb.items())}
 
     # 6. Accuracy by dimension
     by_dim: dict[int, list[dict]] = defaultdict(list)
@@ -135,10 +135,10 @@ def build_diagnostic_profile(
     # Overall score: weighted harmonic mean of dimension averages
     dimension_scores = [
         np.mean(list(profile.accuracy_by_depth.values())) if profile.accuracy_by_depth else 0,
-        np.mean(list(profile.accuracy_by_distractor_ratio.values())) if profile.accuracy_by_distractor_ratio else 0,
+        np.mean(list(profile.accuracy_by_num_points.values())) if profile.accuracy_by_num_points else 0,
         np.mean(list(profile.accuracy_by_transform_count.values())) if profile.accuracy_by_transform_count else 0,
         np.mean(list(profile.accuracy_by_query_position.values())) if profile.accuracy_by_query_position else 0,
-        np.mean(list(profile.accuracy_by_dag_structure.values())) if profile.accuracy_by_dag_structure else 0,
+        np.mean(list(profile.accuracy_by_leaf_bias.values())) if profile.accuracy_by_leaf_bias else 0,
         np.mean(list(profile.accuracy_by_dim.values())) if profile.accuracy_by_dim else 0,
     ]
     profile.overall_score = float(_weighted_harmonic_mean(dimension_scores))

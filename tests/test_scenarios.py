@@ -7,7 +7,7 @@ from numpy.testing import assert_allclose
 import random
 
 from zelusbench.scenarios.config import (
-    ScenarioConfig, DAGStructure, QueryType, DistractorLevel, TransformDensity,
+    ScenarioConfig, QueryType,
     easy_config, medium_config, hard_config,
 )
 from zelusbench.scenarios.generator import ScenarioGenerator, Scenario, generate_scenario_batch
@@ -34,39 +34,40 @@ class TestScenarioGeneration:
         s2 = gen2.generate("test")
         assert s1.prompt == s2.prompt
 
-    def test_all_dag_structures(self):
-        for structure in DAGStructure:
+    def test_leaf_bias_spectrum(self):
+        """Different leaf_bias values should produce valid scenarios."""
+        for lb in [0.0, 0.25, 0.5, 0.75, 1.0]:
             cfg = ScenarioConfig(
                 dim=3, min_chain_depth=4, max_chain_depth=6,
-                dag_structure=structure,
-                distractor_level=DistractorLevel.CLEAN,
-                transform_density=TransformDensity.STATIC,
-                num_queries=2, num_splits=2, seed=42,
+                leaf_bias=lb, num_points=8,
+                transform_prob=0.0,
+                num_queries=2, seed=42,
             )
             gen = ScenarioGenerator(cfg)
-            scenario = gen.generate(f"test_{structure.name}")
+            scenario = gen.generate(f"test_lb_{lb}")
             assert len(scenario.queries) >= 1
             for q in scenario.queries:
                 assert q.ground_truth is not None
 
-    def test_with_distractors(self):
+    def test_many_points(self):
+        """Many points should produce a longer prompt."""
         cfg = ScenarioConfig(
             dim=3, min_chain_depth=3, max_chain_depth=5,
-            distractor_level=DistractorLevel.HIGH,
-            transform_density=TransformDensity.STATIC,
-            num_queries=2, num_splits=2, seed=42,
+            num_points=20, leaf_bias=0.5,
+            transform_prob=0.0,
+            num_queries=2, seed=42,
         )
         gen = ScenarioGenerator(cfg)
-        scenario = gen.generate("test_distractor")
+        scenario = gen.generate("test_many")
         assert len(scenario.prompt) > 0
 
     def test_with_transforms(self):
         cfg = ScenarioConfig(
             dim=3, min_chain_depth=3, max_chain_depth=5,
-            distractor_level=DistractorLevel.CLEAN,
-            transform_density=TransformDensity.LIGHT,
+            num_points=8, leaf_bias=0.5,
+            transform_prob=0.15,
             transform_types=["rotation", "translation"],
-            num_queries=3, num_splits=3, seed=42,
+            num_queries=3, seed=42,
         )
         gen = ScenarioGenerator(cfg)
         scenario = gen.generate("test_transform")
@@ -91,13 +92,43 @@ class TestScenarioGeneration:
         cfg = ScenarioConfig(
             dim=3, min_chain_depth=4, max_chain_depth=6,
             query_types=[QueryType.POSITION, QueryType.DISTANCE, QueryType.BOOLEAN],
-            num_queries=6, num_splits=3, seed=42,
+            num_points=8, num_queries=6, seed=42,
         )
         gen = ScenarioGenerator(cfg)
         scenario = gen.generate("test_qtypes")
         types = {q.query_type for q in scenario.queries}
-        # Should have at least one type (random selection)
         assert len(types) >= 1
+
+    def test_min_depth_reached(self):
+        """Generator should always reach min_chain_depth."""
+        for seed in range(10):
+            cfg = ScenarioConfig(
+                dim=3, min_chain_depth=6, max_chain_depth=8,
+                leaf_bias=0.3, num_points=10,
+                transform_prob=0.0, num_queries=2, seed=seed,
+            )
+            gen = ScenarioGenerator(cfg)
+            scenario = gen.generate(f"depth_test_{seed}")
+            from zelusbench.geometry.space import Space
+            space = Space.from_dict(scenario.space_snapshot)
+            max_depth = max(space.chain_depth(p) for p in space.non_origin_points())
+            assert max_depth >= 6, f"seed={seed}: max_depth={max_depth}, expected >= 6"
+
+    def test_high_leaf_bias_is_linear(self):
+        """leaf_bias=1.0 should produce mostly linear chains (high max depth)."""
+        cfg = ScenarioConfig(
+            dim=2, min_chain_depth=5, max_chain_depth=10,
+            leaf_bias=1.0, num_points=8,
+            transform_prob=0.0, num_queries=2, seed=42,
+        )
+        gen = ScenarioGenerator(cfg)
+        scenario = gen.generate("linear_test")
+        from zelusbench.geometry.space import Space
+        space = Space.from_dict(scenario.space_snapshot)
+        pts = space.non_origin_points()
+        max_depth = max(space.chain_depth(p) for p in pts)
+        # With lb=1.0 and 8 points, depth should be close to 8
+        assert max_depth >= 5
 
 
 class TestParsing:
@@ -194,9 +225,8 @@ class TestScoring:
         assert score_wrong.score == 0.0
 
     def test_relative_error_near_origin(self):
-        # With epsilon=1.0, error near origin should be reasonable
         err = relative_error_vec(np.array([0.1, 0, 0]), np.array([0, 0, 0]))
-        assert err < 0.15  # 0.1 / 1.0 = 0.1
+        assert err < 0.15
 
 
 class TestQueryTargetDepth:
@@ -204,11 +234,10 @@ class TestQueryTargetDepth:
         """All queries should target exactly the configured depth."""
         cfg = ScenarioConfig(
             dim=3, min_chain_depth=8, max_chain_depth=8,
-            dag_structure=DAGStructure.LINEAR,
-            distractor_level=DistractorLevel.CLEAN,
-            transform_density=TransformDensity.STATIC,
+            leaf_bias=1.0, num_points=10,
+            transform_prob=0.0,
             query_types=[QueryType.POSITION],
-            num_queries=3, num_splits=5,
+            num_queries=3,
             query_target_depth=8, seed=42,
         )
         gen = ScenarioGenerator(cfg)
@@ -222,11 +251,10 @@ class TestQueryTargetDepth:
         """Queries should target points at or above min depth."""
         cfg = ScenarioConfig(
             dim=3, min_chain_depth=10, max_chain_depth=10,
-            dag_structure=DAGStructure.LINEAR,
-            distractor_level=DistractorLevel.CLEAN,
-            transform_density=TransformDensity.STATIC,
+            leaf_bias=1.0, num_points=12,
+            transform_prob=0.0,
             query_types=[QueryType.POSITION],
-            num_queries=3, num_splits=5,
+            num_queries=3,
             query_min_depth=7, seed=42,
         )
         gen = ScenarioGenerator(cfg)
@@ -240,17 +268,15 @@ class TestQueryTargetDepth:
         """Distance queries: primary target at target depth."""
         cfg = ScenarioConfig(
             dim=3, min_chain_depth=6, max_chain_depth=6,
-            dag_structure=DAGStructure.LINEAR,
-            distractor_level=DistractorLevel.CLEAN,
-            transform_density=TransformDensity.STATIC,
+            leaf_bias=1.0, num_points=8,
+            transform_prob=0.0,
             query_types=[QueryType.DISTANCE],
-            num_queries=3, num_splits=3,
+            num_queries=3,
             query_target_depth=6, seed=99,
         )
         gen = ScenarioGenerator(cfg)
         scenario = gen.generate("dist_depth_test")
         for q in scenario.queries:
-            # Primary target (first in target_points) should be at depth 6
             from zelusbench.geometry.space import Space
             space = Space.from_dict(scenario.space_snapshot)
             primary_depth = space.chain_depth(q.target_points[0])
@@ -283,11 +309,10 @@ class TestRandomizeExcept:
                 "min_chain_depth": 4, "max_chain_depth": 4, "seed": seed,
             })
             configs.append(cfg)
-        # Check that at least some variety exists
         dims = {c.dim for c in configs}
-        structures = {c.dag_structure for c in configs}
+        leaf_biases = {c.leaf_bias for c in configs}
         assert len(dims) >= 2, "Expected both 2D and 3D across 20 seeds"
-        assert len(structures) >= 2, "Expected multiple DAG structures"
+        assert len(leaf_biases) >= 2, "Expected multiple leaf_bias values"
 
     def test_no_spherical_in_2d(self):
         """2D configs should never include magnitude_spherical."""
@@ -313,15 +338,15 @@ class TestEndToEnd:
             truth = q.ground_truth
             if isinstance(truth, np.ndarray):
                 coords = ", ".join(f"{x:.4f}" for x in truth)
-                responses.append(f"[Query {q.query_id}] The position is ({coords})")
+                responses.append(f"[Answer {q.query_id}] ({coords})")
             elif isinstance(truth, float):
-                responses.append(f"[Query {q.query_id}] The distance is {truth:.4f}")
+                responses.append(f"[Answer {q.query_id}] {truth:.4f}")
             else:
-                responses.append(f"[Query {q.query_id}] {truth}")
+                responses.append(f"[Answer {q.query_id}] {truth}")
         mock_response = "\n".join(responses)
 
-        # Split and score
-        parts = re.split(r'\[Query\s+q_\d+\]', mock_response)
+        # Split by [Answer q_ID] and score
+        parts = re.split(r'\[Answer\s+q_\d+\]', mock_response)
         if len(parts) > 1:
             parts = parts[1:]
 
