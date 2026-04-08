@@ -369,10 +369,26 @@ class ScenarioGenerator:
 
         return distractor_names
 
+    def _pick_deep_point(self, space: Space, main_points: list[str]) -> str:
+        """Pick a point biased toward the deeper end of the chain."""
+        # Sort by depth descending
+        by_depth = sorted(main_points, key=lambda p: space.chain_depth(p), reverse=True)
+        # Pick from the deepest half (at least 1 point)
+        deep_half = by_depth[:max(1, len(by_depth) // 2)]
+        return self.rng.choice(deep_half)
+
     def _plan_queries(self, space: Space, main_points: list[str]) -> list[Query]:
-        """Plan queries distributed across the scenario."""
+        """Plan queries distributed across the scenario.
+
+        Queries are biased toward deeper points so that chain depth
+        actually tests sustained attention — not shallow lookups.
+        The first query always targets the deepest point.
+        """
         cfg = self.config
         queries = []
+
+        # Find the deepest point for guaranteed coverage
+        deepest = max(main_points, key=lambda p: space.chain_depth(p))
 
         for i in range(cfg.num_queries):
             qtype = self.rng.choice(cfg.query_types)
@@ -380,7 +396,8 @@ class ScenarioGenerator:
 
             match qtype:
                 case QueryType.POSITION:
-                    target = self.rng.choice(main_points)
+                    # First query targets deepest; rest biased toward deep
+                    target = deepest if i == 0 else self._pick_deep_point(space, main_points)
                     pos = space.get_position(target)
                     queries.append(Query(
                         query_id=query_id,
@@ -392,10 +409,13 @@ class ScenarioGenerator:
                     ))
 
                 case QueryType.DISTANCE:
-                    if len(main_points) >= 2:
-                        a, b = self.rng.sample(main_points, 2)
+                    # At least one endpoint should be deep
+                    a = deepest if i == 0 else self._pick_deep_point(space, main_points)
+                    candidates = [p for p in main_points if p != a]
+                    if candidates:
+                        b = self.rng.choice(candidates)
                     else:
-                        a, b = main_points[0], "O"
+                        b = "O"
                     dist = distance(space.get_position(a), space.get_position(b))
                     queries.append(Query(
                         query_id=query_id,
@@ -407,11 +427,14 @@ class ScenarioGenerator:
                     ))
 
                 case QueryType.BOOLEAN:
-                    if len(main_points) >= 3:
-                        target, a, b = self.rng.sample(main_points, 3)
+                    target = deepest if i == 0 else self._pick_deep_point(space, main_points)
+                    candidates = [p for p in main_points if p != target]
+                    if len(candidates) >= 2:
+                        a, b = self.rng.sample(candidates, 2)
+                    elif len(candidates) == 1:
+                        a, b = candidates[0], "O"
                     else:
-                        target = main_points[0]
-                        a, b = "O", main_points[-1] if len(main_points) > 1 else "O"
+                        a, b = "O", "O"
                     d_a = distance(space.get_position(target), space.get_position(a))
                     d_b = distance(space.get_position(target), space.get_position(b))
                     answer = a if d_a < d_b else b
