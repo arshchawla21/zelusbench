@@ -123,10 +123,18 @@ class ScenarioGenerator:
         # Spread queries evenly: emit after every query_interval points
         query_interval = max(1, num_points // (queries_remaining + 1))
 
-        # Phase 1: Depth ramp — force linear growth until min_chain_depth
-        # Use leaf_bias=1.0 and single-anchor types only to guarantee depth growth
+        # Phase 1: Build until min_chain_depth is reached
+        # Use configured leaf_bias when there's slack, force linear only when
+        # remaining budget is tight (must extend deepest chain to hit target)
         while points_placed < num_points and max_depth < cfg.min_chain_depth:
-            name, defn = self._gen_point(space, leaf_bias=1.0, force_single_anchor=True)
+            depth_deficit = cfg.min_chain_depth - max_depth
+            points_left = num_points - points_placed
+            must_extend = depth_deficit >= points_left  # no slack, must go linear
+            if must_extend:
+                # Extend from the deepest point specifically
+                name, defn = self._gen_point_from_deepest(space)
+            else:
+                name, defn = self._gen_point(space, leaf_bias=cfg.leaf_bias)
             lines.append(render_point_definition(name, defn))
             points_placed += 1
             max_depth = max(max_depth, space.chain_depth(name))
@@ -166,17 +174,17 @@ class ScenarioGenerator:
                 q = self._recompute_ground_truth(q, space)
                 used_targets.add(q.target_points[0])
                 lines.append(self._render_query(q, cfg.dim))
+                lines.append("")
                 final_queries.append(q)
                 query_idx += 1
                 queries_remaining -= 1
 
         # Phase 3: Remaining queries (leftover from interval misses)
-        if queries_remaining > 0:
-            lines.append("")
         while queries_remaining > 0:
             pts = space.non_origin_points()
             if not pts:
                 break
+            lines.append("")
             q = self._plan_single_query(space, pts, used_targets, query_idx)
             q = self._recompute_ground_truth(q, space)
             used_targets.add(q.target_points[0])
@@ -188,7 +196,7 @@ class ScenarioGenerator:
         return Scenario(
             scenario_id=scenario_id,
             config=cfg,
-            prompt="\n".join(lines),
+            prompt="\n".join(lines).strip(),
             queries=final_queries,
             space_snapshot=space.to_dict(),
         )
@@ -196,6 +204,19 @@ class ScenarioGenerator:
     # ------------------------------------------------------------------
     # Point generation
     # ------------------------------------------------------------------
+
+    def _gen_point_from_deepest(self, space: Space) -> tuple[str, PointDefinition]:
+        """Generate a point extending from the deepest point (guaranteed depth growth)."""
+        name = self._next_name()
+        pts = space.non_origin_points()
+        if pts:
+            anchor = max(pts, key=lambda p: space.chain_depth(p))
+        else:
+            anchor = "O"
+        defn = self._random_point_def(anchor, self.config.dim, space,
+                                       force_single_anchor=True)
+        space.define_point(name, defn)
+        return name, defn
 
     def _gen_point(
         self, space: Space, leaf_bias: float,
