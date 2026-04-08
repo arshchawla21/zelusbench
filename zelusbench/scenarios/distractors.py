@@ -88,29 +88,3 @@ def generate_branch_distractors(
     return results
 
 
-def generate_restatement_distractors(
-    main_chain_names: list[str],
-    count: int,
-    rng: random.Random,
-) -> list[str]:
-    """Generate restatement text that re-describes known information.
-
-    Returns natural language strings (not point definitions).
-    """
-    if count == 0 or not main_chain_names:
-        return []
-
-    templates = [
-        "Note that Point {name} has already been defined above.",
-        "Recall that Point {name} was established earlier in this sequence.",
-        "As a reminder, Point {name} exists in the current configuration.",
-        "Keep in mind the position of Point {name} from before.",
-    ]
-
-    results = []
-    for _ in range(count):
-        name = rng.choice(main_chain_names)
-        template = rng.choice(templates)
-        results.append(template.format(name=name))
-
-    return results

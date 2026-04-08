@@ -58,11 +58,10 @@ Every point (except the origin) is defined relative to one or more existing poin
 
 ### Distractor Points
 
-Some points exist only to create noise. They may:
+Some points exist only to create noise. They are real points with valid definitions — they just don't matter for any query. They may:
 
 - Belong to a **disconnected subgraph** (defined relative to each other but never queried and never connected to queried points)
 - Be **on the dependency chain** but irrelevant to the specific query (e.g., query asks about Z, and M branches off from C but Z doesn't depend on M)
-- **Re-state known information** in a different form ("Note that A is 5 units from the origin" when A was already defined)
 
 ---
 

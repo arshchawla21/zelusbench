@@ -27,7 +27,6 @@ from .templates import (
 )
 from .distractors import (
     generate_disconnected_distractors, generate_branch_distractors,
-    generate_restatement_distractors,
 )
 
 
@@ -579,11 +578,6 @@ class ScenarioGenerator:
                     defn = space.get_definition(name)
                     lines.append(render_point_definition(name, defn))
 
-                restatements = generate_restatement_distractors(
-                    defined_main, min(2, cfg.distractor_ratio), self.rng,
-                )
-                for r in restatements:
-                    lines.append(r)
 
             lines.append("")
 
