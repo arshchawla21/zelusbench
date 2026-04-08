@@ -98,12 +98,16 @@ class ScenarioGenerator:
         self._name_counter = 0
 
     def _next_name(self) -> str:
-        self._name_counter += 1
-        # Use A, B, C, ... then A1, B1, ...
-        idx = self._name_counter - 1
-        if idx < 26:
-            return chr(ord('A') + idx)
-        return chr(ord('A') + idx % 26) + str(idx // 26)
+        # Use A, B, C, ... (skip O — reserved for origin) then A1, B1, ...
+        while True:
+            self._name_counter += 1
+            idx = self._name_counter - 1
+            if idx < 26:
+                name = chr(ord('A') + idx)
+            else:
+                name = chr(ord('A') + idx % 26) + str(idx // 26)
+            if not name.startswith('O'):
+                return name
 
     def generate(self, scenario_id: str) -> Scenario:
         """Generate a complete scenario."""
@@ -116,15 +120,13 @@ class ScenarioGenerator:
         # Phase 2: Generate distractors
         distractor_points = self._generate_distractors(space, main_points)
 
-        # Phase 3: Determine query placement and transforms
-        queries = self._plan_queries(space, main_points)
-
-        # Phase 4: Plan transforms
+        # Phase 3: Plan transforms
         transforms = self._plan_transforms(space, main_points)
 
-        # Phase 5: Assemble the prompt with interleaved blocks
+        # Phase 4: Assemble prompt — queries are planned inline per-split
+        #          so they only reference points defined so far
         prompt, final_queries = self._assemble_prompt(
-            space, main_points, distractor_points, queries, transforms
+            space, main_points, distractor_points, transforms
         )
 
         return Scenario(
@@ -377,78 +379,67 @@ class ScenarioGenerator:
         deep_half = by_depth[:max(1, len(by_depth) // 2)]
         return self.rng.choice(deep_half)
 
-    def _plan_queries(self, space: Space, main_points: list[str]) -> list[Query]:
-        """Plan queries distributed across the scenario.
+    def _plan_single_query(
+        self, space: Space, available_points: list[str],
+        used_targets: set[str], query_idx: int,
+    ) -> Query:
+        """Plan one query targeting only points defined so far.
 
-        Queries are biased toward deeper points so that chain depth
-        actually tests sustained attention — not shallow lookups.
-        The first query always targets the deepest point.
+        Biased toward deeper points. Avoids re-using the same primary
+        target across queries when possible.
         """
-        cfg = self.config
-        queries = []
+        qtype = self.rng.choice(self.config.query_types)
+        query_id = f"q_{query_idx:03d}"
 
-        # Find the deepest point for guaranteed coverage
-        deepest = max(main_points, key=lambda p: space.chain_depth(p))
+        # Prefer untouched deep points; fall back to all available
+        candidates = [p for p in available_points if p not in used_targets]
+        if not candidates:
+            candidates = list(available_points)
 
-        for i in range(cfg.num_queries):
-            qtype = self.rng.choice(cfg.query_types)
-            query_id = f"q_{i:03d}"
+        target = self._pick_deep_point(space, candidates)
 
-            match qtype:
-                case QueryType.POSITION:
-                    # First query targets deepest; rest biased toward deep
-                    target = deepest if i == 0 else self._pick_deep_point(space, main_points)
-                    pos = space.get_position(target)
-                    queries.append(Query(
-                        query_id=query_id,
-                        query_type=qtype,
-                        target_points=[target],
-                        ground_truth=pos,
-                        chain_depth=space.chain_depth(target),
-                        query_index=i,
-                    ))
+        match qtype:
+            case QueryType.POSITION:
+                return Query(
+                    query_id=query_id, query_type=qtype,
+                    target_points=[target],
+                    ground_truth=space.get_position(target),
+                    chain_depth=space.chain_depth(target),
+                    query_index=query_idx,
+                )
 
-                case QueryType.DISTANCE:
-                    # At least one endpoint should be deep
-                    a = deepest if i == 0 else self._pick_deep_point(space, main_points)
-                    candidates = [p for p in main_points if p != a]
-                    if candidates:
-                        b = self.rng.choice(candidates)
-                    else:
-                        b = "O"
-                    dist = distance(space.get_position(a), space.get_position(b))
-                    queries.append(Query(
-                        query_id=query_id,
-                        query_type=qtype,
-                        target_points=[a, b],
-                        ground_truth=float(dist),
-                        chain_depth=max(space.chain_depth(a), space.chain_depth(b)),
-                        query_index=i,
-                    ))
+            case QueryType.DISTANCE:
+                others = [p for p in available_points if p != target]
+                b = self.rng.choice(others) if others else "O"
+                return Query(
+                    query_id=query_id, query_type=qtype,
+                    target_points=[target, b],
+                    ground_truth=float(distance(
+                        space.get_position(target), space.get_position(b))),
+                    chain_depth=max(space.chain_depth(target),
+                                    space.chain_depth(b)),
+                    query_index=query_idx,
+                )
 
-                case QueryType.BOOLEAN:
-                    target = deepest if i == 0 else self._pick_deep_point(space, main_points)
-                    candidates = [p for p in main_points if p != target]
-                    if len(candidates) >= 2:
-                        a, b = self.rng.sample(candidates, 2)
-                    elif len(candidates) == 1:
-                        a, b = candidates[0], "O"
-                    else:
-                        a, b = "O", "O"
-                    d_a = distance(space.get_position(target), space.get_position(a))
-                    d_b = distance(space.get_position(target), space.get_position(b))
-                    answer = a if d_a < d_b else b
-                    queries.append(Query(
-                        query_id=query_id,
-                        query_type=qtype,
-                        target_points=[target, a, b],
-                        ground_truth=answer,
-                        chain_depth=max(space.chain_depth(target),
-                                        space.chain_depth(a), space.chain_depth(b)),
-                        query_index=i,
-                    ))
-
-        return queries
+            case QueryType.BOOLEAN:
+                others = [p for p in available_points if p != target]
+                if len(others) >= 2:
+                    a, b = self.rng.sample(others, 2)
+                elif len(others) == 1:
+                    a, b = others[0], "O"
+                else:
+                    a, b = "O", "O"
+                d_a = distance(space.get_position(target), space.get_position(a))
+                d_b = distance(space.get_position(target), space.get_position(b))
+                answer = a if d_a < d_b else b
+                return Query(
+                    query_id=query_id, query_type=qtype,
+                    target_points=[target, a, b],
+                    ground_truth=answer,
+                    chain_depth=max(space.chain_depth(target),
+                                    space.chain_depth(a), space.chain_depth(b)),
+                    query_index=query_idx,
+                )
 
     def _plan_transforms(self, space: Space, main_points: list[str]) -> list[Transform]:
         """Plan transform events based on config."""
@@ -497,10 +488,14 @@ class ScenarioGenerator:
         space: Space,
         main_points: list[str],
         distractor_points: list[str],
-        queries: list[Query],
         transforms: list[Transform],
     ) -> tuple[str, list[Query]]:
-        """Assemble the full prompt with interleaved blocks."""
+        """Assemble the prompt with interleaved blocks.
+
+        Queries are planned inline so they only reference points that
+        have already been defined — no forward references.  Each query
+        targets a distinct primary point when possible.
+        """
         cfg = self.config
         lines: list[str] = []
 
@@ -509,66 +504,87 @@ class ScenarioGenerator:
         lines.append("")
 
         # Distribute main points across splits
-        all_points = list(main_points)
-        splits = self._split_list(all_points, cfg.num_splits)
+        splits = self._split_list(list(main_points), cfg.num_splits)
 
         # Distribute distractors across splits
         dist_splits = self._split_list(distractor_points, cfg.num_splits)
 
-        # Distribute transforms between queries
-        transform_placements = self._split_list(transforms, max(1, cfg.num_queries - 1))
+        # Distribute transforms between splits (applied after each query)
+        transform_placements = self._split_list(
+            transforms, max(1, cfg.num_splits - 1)
+        )
 
-        # Track which queries need ground truth recomputed after transforms
-        applied_transforms = 0
+        defined_main: list[str] = []  # main points defined so far
+        used_targets: set[str] = set()
         final_queries: list[Query] = []
+        query_idx = 0
 
-        for split_idx in range(cfg.num_splits):
-            # Statement block
+        # Space queries evenly across splits, always including the last
+        # split so the final query sees all points.
+        n_splits = cfg.num_splits
+        n_queries = cfg.num_queries
+        if n_queries >= n_splits:
+            query_at_splits = set(range(n_splits))
+        else:
+            # e.g. 3 queries, 5 splits → splits {0, 2, 4}
+            step = (n_splits - 1) / max(1, n_queries - 1) if n_queries > 1 else 0
+            query_at_splits = set(
+                round(i * step) for i in range(n_queries)
+            ) if n_queries > 1 else {n_splits - 1}
+
+        for split_idx in range(n_splits):
+            # --- New point definitions ---
             if split_idx < len(splits):
                 for name in splits[split_idx]:
                     defn = space.get_definition(name)
                     lines.append(render_point_definition(name, defn))
+                    defined_main.append(name)
 
-            # Distractor block
+            # --- Distractor block ---
             if split_idx < len(dist_splits) and dist_splits[split_idx]:
                 lines.append("")
                 for name in dist_splits[split_idx]:
                     defn = space.get_definition(name)
                     lines.append(render_point_definition(name, defn))
 
-                # Add restatement distractors
                 restatements = generate_restatement_distractors(
-                    main_points, min(2, cfg.distractor_ratio), self.rng
+                    main_points, min(2, cfg.distractor_ratio), self.rng,
                 )
                 for r in restatements:
                     lines.append(r)
 
             lines.append("")
 
-            # Query checkpoint (if we have queries left)
-            if split_idx < len(queries):
-                q = queries[split_idx]
+            # --- Query at designated splits ---
+            if split_idx in query_at_splits and query_idx < n_queries and defined_main:
+                q = self._plan_single_query(
+                    space, defined_main, used_targets, query_idx,
+                )
+                q = self._recompute_ground_truth(q, space)
+                used_targets.add(q.target_points[0])
                 lines.append(self._render_query(q, cfg.dim))
                 lines.append("")
-
-                # Recompute ground truth based on current space state
-                q = self._recompute_ground_truth(q, space)
                 final_queries.append(q)
+                query_idx += 1
 
-            # Apply transforms after query (except after last)
+            # --- Transforms (applied after query) ---
             if split_idx < len(transform_placements) and transform_placements[split_idx]:
                 for t in transform_placements[split_idx]:
                     t.apply(space)
                     lines.append(render_transform(t))
-                    applied_transforms += 1
                 lines.append("")
 
         # Any remaining queries after all splits
-        for q in queries[len(final_queries):]:
+        while query_idx < n_queries and defined_main:
+            q = self._plan_single_query(
+                space, defined_main, used_targets, query_idx,
+            )
+            q = self._recompute_ground_truth(q, space)
+            used_targets.add(q.target_points[0])
             lines.append(self._render_query(q, cfg.dim))
             lines.append("")
-            q = self._recompute_ground_truth(q, space)
             final_queries.append(q)
+            query_idx += 1
 
         return "\n".join(lines), final_queries
 

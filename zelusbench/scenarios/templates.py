@@ -24,7 +24,12 @@ def render_system_prompt(dim: int) -> str:
     coord_labels = _fmt_coord_labels(dim)
     return (
         f"You are solving a spatial reasoning task in {dim}D space with coordinates ({coord_labels}). "
-        f"The origin O is at {_fmt_vec(np.zeros(dim))}. "
+        f"The origin O is at {_fmt_vec(np.zeros(dim))}.\n\n"
+        f"IMPORTANT: The statements and queries below are presented in strict chronological order. "
+        f"Each point definition, transformation, or query builds on everything that came before it. "
+        f"When answering a query, use only the information available up to that point in the sequence. "
+        f"If a transformation modifies a point, all subsequent references to that point (and any points "
+        f"defined relative to it) must reflect the updated position.\n\n"
         f"Track all point positions carefully. When asked a question, provide your answer "
         f"in the exact format requested. Show your final answer clearly."
     )
