@@ -10,14 +10,25 @@ import numpy as np
 
 from ..geometry.vectors import Vec
 
-EPSILON = 1.0  # Tolerance for near-origin scoring
+EPSILON = 1.0  # Tolerance for near-origin scoring (distance/scalar queries)
+
+# Absolute error thresholds for POSITION queries (in coordinate units).
+# These are depth-independent so deeper chains don't get an unfair advantage.
+POS_EXACT = 0.5       # within 0.5 units -> 1.0
+POS_CLOSE = 2.0       # within 2.0 units -> 0.7
+POS_APPROXIMATE = 5.0 # within 5.0 units -> 0.3
+
+# Relative error thresholds for DISTANCE queries.
+REL_EXACT = 0.01      # < 1% -> 1.0
+REL_CLOSE = 0.05      # < 5% -> 0.7
+REL_APPROXIMATE = 0.15 # < 15% -> 0.3
 
 
 class ScoreTier(Enum):
-    EXACT = auto()       # < 1% relative error -> 1.0
-    CLOSE = auto()       # < 5% relative error -> 0.7
-    APPROXIMATE = auto() # < 15% relative error -> 0.3
-    WRONG = auto()       # >= 15% relative error -> 0.0
+    EXACT = auto()       # -> 1.0
+    CLOSE = auto()       # -> 0.7
+    APPROXIMATE = auto() # -> 0.3
+    WRONG = auto()       # -> 0.0
     REFUSED = auto()     # Unparseable -> 0.0
 
 
@@ -62,6 +73,11 @@ class QueryScore:
         }
 
 
+def absolute_error_vec(predicted: Vec, truth: Vec) -> float:
+    """Compute absolute Euclidean error for vector predictions."""
+    return float(np.linalg.norm(predicted - truth))
+
+
 def relative_error_vec(predicted: Vec, truth: Vec) -> float:
     """Compute relative error for vector predictions."""
     error = float(np.linalg.norm(predicted - truth))
@@ -76,12 +92,25 @@ def relative_error_scalar(predicted: float, truth: float) -> float:
     return error / denom
 
 
-def tier_from_error(rel_error: float) -> ScoreTier:
-    if rel_error < 0.01:
+def tier_from_abs_error(abs_error: float) -> ScoreTier:
+    """Tier from absolute error (for POSITION queries)."""
+    if abs_error < POS_EXACT:
         return ScoreTier.EXACT
-    elif rel_error < 0.05:
+    elif abs_error < POS_CLOSE:
         return ScoreTier.CLOSE
-    elif rel_error < 0.15:
+    elif abs_error < POS_APPROXIMATE:
+        return ScoreTier.APPROXIMATE
+    else:
+        return ScoreTier.WRONG
+
+
+def tier_from_rel_error(rel_error: float) -> ScoreTier:
+    """Tier from relative error (for DISTANCE queries)."""
+    if rel_error < REL_EXACT:
+        return ScoreTier.EXACT
+    elif rel_error < REL_CLOSE:
+        return ScoreTier.CLOSE
+    elif rel_error < REL_APPROXIMATE:
         return ScoreTier.APPROXIMATE
     else:
         return ScoreTier.WRONG
@@ -115,12 +144,12 @@ def score_query(query: dict, parsed: dict) -> QueryScore:
         case "POSITION":
             truth_vec = np.array(ground_truth, dtype=np.float64)
             pred_vec = np.array(predicted, dtype=np.float64) if not isinstance(predicted, np.ndarray) else predicted
-            rel_err = relative_error_vec(pred_vec, truth_vec)
-            tier = tier_from_error(rel_err)
+            abs_err = absolute_error_vec(pred_vec, truth_vec)
+            tier = tier_from_abs_error(abs_err)
             return QueryScore(
                 query_id=query_id, query_type=query_type,
                 score=TIER_SCORES[tier], tier=tier,
-                relative_error=rel_err,
+                relative_error=abs_err,
                 predicted=pred_vec, ground_truth=truth_vec,
                 chain_depth=chain_depth, query_index=query_index,
             )
@@ -129,7 +158,7 @@ def score_query(query: dict, parsed: dict) -> QueryScore:
             truth_val = float(ground_truth)
             pred_val = float(predicted)
             rel_err = relative_error_scalar(pred_val, truth_val)
-            tier = tier_from_error(rel_err)
+            tier = tier_from_rel_error(rel_err)
             return QueryScore(
                 query_id=query_id, query_type=query_type,
                 score=TIER_SCORES[tier], tier=tier,

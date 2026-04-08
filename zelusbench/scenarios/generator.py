@@ -117,6 +117,7 @@ class ScenarioGenerator:
 
         final_queries: list[Query] = []
         used_targets: set[str] = set()
+        used_combos: set[tuple[str, str]] = set()  # (point, query_type)
         query_idx = 0
         queries_remaining = cfg.num_queries
 
@@ -170,9 +171,11 @@ class ScenarioGenerator:
                 lines.append("")
                 q = self._plan_single_query(
                     space, space.non_origin_points(), used_targets, query_idx,
+                    used_combos=used_combos,
                 )
                 q = self._recompute_ground_truth(q, space)
                 used_targets.add(q.target_points[0])
+                used_combos.add((q.target_points[0], q.query_type.name))
                 lines.append(self._render_query(q, cfg.dim))
                 lines.append("")
                 final_queries.append(q)
@@ -185,9 +188,11 @@ class ScenarioGenerator:
             if not pts:
                 break
             lines.append("")
-            q = self._plan_single_query(space, pts, used_targets, query_idx)
+            q = self._plan_single_query(space, pts, used_targets, query_idx,
+                                         used_combos=used_combos)
             q = self._recompute_ground_truth(q, space)
             used_targets.add(q.target_points[0])
+            used_combos.add((q.target_points[0], q.query_type.name))
             lines.append(self._render_query(q, cfg.dim))
             final_queries.append(q)
             query_idx += 1
@@ -356,18 +361,31 @@ class ScenarioGenerator:
         self, space: Space, available_points: list[str],
         used_targets: set[str],
     ) -> str:
-        """Select a query target respecting depth constraints from config."""
+        """Select a query target respecting depth constraints from config.
+
+        Always prefers unused targets to avoid duplicate queries.
+        """
         cfg = self.config
 
         if cfg.query_target_depth is not None:
-            pt = self._pick_point_at_depth(space, available_points, cfg.query_target_depth)
-            if pt is not None:
-                return pt
-            return self._pick_deep_point(space, available_points)
+            at_depth = [p for p in available_points
+                        if space.chain_depth(p) == cfg.query_target_depth]
+            # Prefer unused targets at the right depth
+            unused_at_depth = [p for p in at_depth if p not in used_targets]
+            if unused_at_depth:
+                return self.rng.choice(unused_at_depth)
+            if at_depth:
+                return self.rng.choice(at_depth)
+            # Fallback: pick deep, prefer unused
+            candidates = [p for p in available_points if p not in used_targets]
+            return self._pick_deep_point(space, candidates or available_points)
 
         if cfg.query_min_depth is not None:
             deep_enough = [p for p in available_points
                            if space.chain_depth(p) >= cfg.query_min_depth]
+            unused_deep = [p for p in deep_enough if p not in used_targets]
+            if unused_deep:
+                return self.rng.choice(unused_deep)
             if deep_enough:
                 return self.rng.choice(deep_enough)
             return self._pick_deep_point(space, available_points)
@@ -381,12 +399,21 @@ class ScenarioGenerator:
     def _plan_single_query(
         self, space: Space, available_points: list[str],
         used_targets: set[str], query_idx: int,
+        used_combos: set[tuple[str, str]] | None = None,
     ) -> Query:
         """Plan one query targeting only points defined so far."""
-        qtype = self.rng.choice(self.config.query_types)
         query_id = f"q_{query_idx:03d}"
-
         target = self._select_query_target(space, available_points, used_targets)
+
+        # Pick a query type, avoiding duplicate (target, type) combos
+        qtypes = list(self.config.query_types)
+        self.rng.shuffle(qtypes)
+        qtype = qtypes[0]  # default
+        if used_combos is not None:
+            for qt in qtypes:
+                if (target, qt.name) not in used_combos:
+                    qtype = qt
+                    break
 
         match qtype:
             case QueryType.POSITION:

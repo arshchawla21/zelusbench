@@ -13,7 +13,7 @@ from zelusbench.scenarios.config import (
 from zelusbench.scenarios.generator import ScenarioGenerator, Scenario, generate_scenario_batch
 from zelusbench.evaluation.parser import parse_coordinates, parse_distance, parse_boolean
 from zelusbench.evaluation.scorer import (
-    score_query, ScoreTier, relative_error_vec, relative_error_scalar,
+    score_query, ScoreTier, absolute_error_vec, relative_error_vec, relative_error_scalar,
 )
 
 
@@ -182,9 +182,10 @@ class TestScoring:
         assert score.score == 1.0
 
     def test_close_match(self):
+        # Absolute error ~1.0 -> CLOSE (0.5 < err < 2.0)
         query = {"query_id": "q_001", "query_type": "POSITION",
                  "ground_truth": [10.0, 0.0, 0.0], "chain_depth": 1, "query_index": 0}
-        parsed = {"parsed_value": np.array([10.3, 0.0, 0.0]), "parse_success": True}
+        parsed = {"parsed_value": np.array([11.0, 0.0, 0.0]), "parse_success": True}
         score = score_query(query, parsed)
         assert score.tier == ScoreTier.CLOSE
         assert score.score == 0.7
