@@ -41,7 +41,7 @@ class ScenarioConfig:
 
     # Point definition types to use
     point_def_types: list[str] = field(default_factory=lambda: [
-        "cartesian_offset", "magnitude_direction", "magnitude_polar",
+        "cartesian_offset", "magnitude_direction",
         "midpoint", "weighted_centroid",
     ])
 
@@ -80,10 +80,15 @@ class ScenarioConfig:
         leaf_bias = pinned.get("leaf_bias",
                                rng.choice([0.0, 0.25, 0.5, 0.75, 1.0]))
 
-        # num_points scales with depth — deeper chains need more points
-        point_brackets = {(2, 3): (4, 8), (4, 6): (6, 12),
-                          (7, 10): (10, 20), (12, 16): (15, 30)}
-        pt_lo, pt_hi = point_brackets.get((lo, hi), (6, 15))
+        # num_points scales with actual depth (not the random bracket)
+        if max_depth <= 3:
+            pt_lo, pt_hi = 3, 6
+        elif max_depth <= 6:
+            pt_lo, pt_hi = 5, 10
+        elif max_depth <= 10:
+            pt_lo, pt_hi = 10, 20
+        else:
+            pt_lo, pt_hi = 15, 30
         num_points = pinned.get("num_points", rng.randint(pt_lo, pt_hi))
 
         transform_prob = pinned.get("transform_prob",
@@ -105,13 +110,15 @@ class ScenarioConfig:
                             [q for q in all_qt if q != QueryType.POSITION],
                             k=rng.randint(0, len(all_qt) - 1)))
 
-        # Point def types — at least 2, filter spherical for 2D
+        # Point def types — at least 2, filter by dimension
+        # magnitude_polar (single angle) is 2D only
+        # magnitude_spherical (theta + phi) is 3D only
         all_pdt = ["cartesian_offset", "magnitude_direction",
-                   "magnitude_polar", "midpoint", "weighted_centroid"]
-        if dim == 3:
+                   "midpoint", "weighted_centroid"]
+        if dim == 2:
+            all_pdt.append("magnitude_polar")
+        if dim >= 3:
             all_pdt.append("magnitude_spherical")
-        else:
-            all_pdt = [t for t in all_pdt if t != "magnitude_spherical"]
         k_pdt = rng.randint(2, len(all_pdt))
         pdt = pinned.get("point_def_types", rng.sample(all_pdt, k_pdt))
 
@@ -156,6 +163,8 @@ def easy_config(**overrides) -> ScenarioConfig:
         dim=2, min_chain_depth=2, max_chain_depth=3,
         leaf_bias=1.0, num_points=4, transform_prob=0.0,
         num_queries=2,
+        point_def_types=["cartesian_offset", "magnitude_direction",
+                         "magnitude_polar", "midpoint", "weighted_centroid"],
     )
     defaults.update(overrides)
     return ScenarioConfig(**defaults)

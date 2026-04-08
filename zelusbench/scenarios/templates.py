@@ -24,7 +24,7 @@ def render_system_prompt(dim: int) -> str:
     coord_labels = _fmt_coord_labels(dim)
     return (
         f"Process the following {dim}D spatial reasoning scenario. "
-        f"Statements are chronological — propagate all transformations before answering.\n"
+        f"Statements and queries to be processed chronologically.\n"
         f"Format: [Answer q_ID] value — e.g. [Answer q_001] ({', '.join(['0.0'] * dim)}) or [Answer q_002] 5.385 or [Answer q_003] B"
     )
 

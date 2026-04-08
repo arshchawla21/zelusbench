@@ -120,12 +120,8 @@ class ScenarioGenerator:
         query_idx = 0
         queries_remaining = cfg.num_queries
 
-        depth_targeted = (cfg.query_target_depth is not None
-                          or cfg.query_min_depth is not None)
-
-        # Determine when to emit non-depth-targeted queries
-        # Spread them evenly: emit a query after every query_interval points
-        query_interval = max(1, num_points // (queries_remaining + 1)) if not depth_targeted else None
+        # Spread queries evenly: emit after every query_interval points
+        query_interval = max(1, num_points // (queries_remaining + 1))
 
         # Phase 1: Depth ramp — force linear growth until min_chain_depth
         # Use leaf_bias=1.0 and single-anchor types only to guarantee depth growth
@@ -158,10 +154,11 @@ class ScenarioGenerator:
             points_placed += 1
             max_depth = max(max_depth, space.chain_depth(name))
 
-            # Interleave query (non-depth-targeted mode)
-            if (not depth_targeted and queries_remaining > 0
-                    and query_interval and points_placed % query_interval == 0
-                    and len(space.non_origin_points()) >= 2):
+            # Interleave query if interval hit and valid target exists
+            if (queries_remaining > 0
+                    and points_placed % query_interval == 0
+                    and len(space.non_origin_points()) >= 2
+                    and self._has_valid_query_target(space)):
                 lines.append("")
                 q = self._plan_single_query(
                     space, space.non_origin_points(), used_targets, query_idx,
@@ -173,7 +170,7 @@ class ScenarioGenerator:
                 query_idx += 1
                 queries_remaining -= 1
 
-        # Phase 3: Remaining queries (all queries for depth-targeted, leftover otherwise)
+        # Phase 3: Remaining queries (leftover from interval misses)
         if queries_remaining > 0:
             lines.append("")
         while queries_remaining > 0:
@@ -243,6 +240,8 @@ class ScenarioGenerator:
         available = list(self.config.point_def_types)
         if dim == 2:
             available = [t for t in available if t != "magnitude_spherical"]
+        if dim >= 3:
+            available = [t for t in available if t != "magnitude_polar"]
         if force_single_anchor:
             available = [t for t in available
                          if t not in ("midpoint", "weighted_centroid")]
@@ -306,6 +305,18 @@ class ScenarioGenerator:
     # ------------------------------------------------------------------
     # Query planning
     # ------------------------------------------------------------------
+
+    def _has_valid_query_target(self, space: Space) -> bool:
+        """Check if a valid query target exists given depth constraints."""
+        cfg = self.config
+        pts = space.non_origin_points()
+        if not pts:
+            return False
+        if cfg.query_target_depth is not None:
+            return any(space.chain_depth(p) == cfg.query_target_depth for p in pts)
+        if cfg.query_min_depth is not None:
+            return any(space.chain_depth(p) >= cfg.query_min_depth for p in pts)
+        return True
 
     def _pick_deep_point(self, space: Space, points: list[str]) -> str:
         """Pick a point biased toward the deeper end of the chain."""
