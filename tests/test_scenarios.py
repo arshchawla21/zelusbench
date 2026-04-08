@@ -4,6 +4,8 @@ import numpy as np
 import pytest
 from numpy.testing import assert_allclose
 
+import random
+
 from zelusbench.scenarios.config import (
     ScenarioConfig, DAGStructure, QueryType, DistractorLevel, TransformDensity,
     easy_config, medium_config, hard_config,
@@ -195,6 +197,104 @@ class TestScoring:
         # With epsilon=1.0, error near origin should be reasonable
         err = relative_error_vec(np.array([0.1, 0, 0]), np.array([0, 0, 0]))
         assert err < 0.15  # 0.1 / 1.0 = 0.1
+
+
+class TestQueryTargetDepth:
+    def test_exact_depth_targeting(self):
+        """All queries should target exactly the configured depth."""
+        cfg = ScenarioConfig(
+            dim=3, min_chain_depth=8, max_chain_depth=8,
+            dag_structure=DAGStructure.LINEAR,
+            distractor_level=DistractorLevel.CLEAN,
+            transform_density=TransformDensity.STATIC,
+            query_types=[QueryType.POSITION],
+            num_queries=3, num_splits=5,
+            query_target_depth=8, seed=42,
+        )
+        gen = ScenarioGenerator(cfg)
+        scenario = gen.generate("depth_target_test")
+        for q in scenario.queries:
+            assert q.chain_depth == 8, (
+                f"Query {q.query_id} has depth {q.chain_depth}, expected 8"
+            )
+
+    def test_min_depth_targeting(self):
+        """Queries should target points at or above min depth."""
+        cfg = ScenarioConfig(
+            dim=3, min_chain_depth=10, max_chain_depth=10,
+            dag_structure=DAGStructure.LINEAR,
+            distractor_level=DistractorLevel.CLEAN,
+            transform_density=TransformDensity.STATIC,
+            query_types=[QueryType.POSITION],
+            num_queries=3, num_splits=5,
+            query_min_depth=7, seed=42,
+        )
+        gen = ScenarioGenerator(cfg)
+        scenario = gen.generate("min_depth_test")
+        for q in scenario.queries:
+            assert q.chain_depth >= 7, (
+                f"Query {q.query_id} has depth {q.chain_depth}, expected >= 7"
+            )
+
+    def test_depth_targeting_with_distance_query(self):
+        """Distance queries: primary target at target depth."""
+        cfg = ScenarioConfig(
+            dim=3, min_chain_depth=6, max_chain_depth=6,
+            dag_structure=DAGStructure.LINEAR,
+            distractor_level=DistractorLevel.CLEAN,
+            transform_density=TransformDensity.STATIC,
+            query_types=[QueryType.DISTANCE],
+            num_queries=3, num_splits=3,
+            query_target_depth=6, seed=99,
+        )
+        gen = ScenarioGenerator(cfg)
+        scenario = gen.generate("dist_depth_test")
+        for q in scenario.queries:
+            # Primary target (first in target_points) should be at depth 6
+            from zelusbench.geometry.space import Space
+            space = Space.from_dict(scenario.space_snapshot)
+            primary_depth = space.chain_depth(q.target_points[0])
+            assert primary_depth == 6, (
+                f"Query {q.query_id} primary target at depth {primary_depth}, expected 6"
+            )
+
+
+class TestRandomizeExcept:
+    def test_pinned_fields_preserved(self):
+        """Pinned fields should not change across seeds."""
+        for seed in range(5):
+            rng = random.Random(seed)
+            cfg = ScenarioConfig.randomize_except(rng, pinned={
+                "dim": 3,
+                "min_chain_depth": 8,
+                "max_chain_depth": 8,
+                "seed": seed,
+            })
+            assert cfg.dim == 3
+            assert cfg.min_chain_depth == 8
+            assert cfg.max_chain_depth == 8
+
+    def test_unpinned_fields_vary(self):
+        """Unpinned fields should vary across seeds."""
+        configs = []
+        for seed in range(20):
+            rng = random.Random(seed)
+            cfg = ScenarioConfig.randomize_except(rng, pinned={
+                "min_chain_depth": 4, "max_chain_depth": 4, "seed": seed,
+            })
+            configs.append(cfg)
+        # Check that at least some variety exists
+        dims = {c.dim for c in configs}
+        structures = {c.dag_structure for c in configs}
+        assert len(dims) >= 2, "Expected both 2D and 3D across 20 seeds"
+        assert len(structures) >= 2, "Expected multiple DAG structures"
+
+    def test_no_spherical_in_2d(self):
+        """2D configs should never include magnitude_spherical."""
+        for seed in range(10):
+            rng = random.Random(seed)
+            cfg = ScenarioConfig.randomize_except(rng, pinned={"dim": 2, "seed": seed})
+            assert "magnitude_spherical" not in cfg.point_def_types
 
 
 class TestEndToEnd:

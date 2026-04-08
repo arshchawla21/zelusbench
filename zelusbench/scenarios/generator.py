@@ -373,11 +373,43 @@ class ScenarioGenerator:
 
     def _pick_deep_point(self, space: Space, main_points: list[str]) -> str:
         """Pick a point biased toward the deeper end of the chain."""
-        # Sort by depth descending
         by_depth = sorted(main_points, key=lambda p: space.chain_depth(p), reverse=True)
-        # Pick from the deepest half (at least 1 point)
         deep_half = by_depth[:max(1, len(by_depth) // 2)]
         return self.rng.choice(deep_half)
+
+    def _pick_point_at_depth(
+        self, space: Space, main_points: list[str], target_depth: int,
+    ) -> str | None:
+        """Pick a random point at exactly the specified chain depth."""
+        at_depth = [p for p in main_points if space.chain_depth(p) == target_depth]
+        return self.rng.choice(at_depth) if at_depth else None
+
+    def _select_query_target(
+        self, space: Space, available_points: list[str],
+        used_targets: set[str],
+    ) -> str:
+        """Select a query target respecting depth constraints from config."""
+        cfg = self.config
+
+        if cfg.query_target_depth is not None:
+            pt = self._pick_point_at_depth(space, available_points, cfg.query_target_depth)
+            if pt is not None:
+                return pt
+            # Fallback: deepest available
+            return self._pick_deep_point(space, available_points)
+
+        if cfg.query_min_depth is not None:
+            deep_enough = [p for p in available_points
+                           if space.chain_depth(p) >= cfg.query_min_depth]
+            if deep_enough:
+                return self.rng.choice(deep_enough)
+            return self._pick_deep_point(space, available_points)
+
+        # Default: biased toward deep, prefer unused targets
+        candidates = [p for p in available_points if p not in used_targets]
+        if not candidates:
+            candidates = list(available_points)
+        return self._pick_deep_point(space, candidates)
 
     def _plan_single_query(
         self, space: Space, available_points: list[str],
@@ -385,18 +417,12 @@ class ScenarioGenerator:
     ) -> Query:
         """Plan one query targeting only points defined so far.
 
-        Biased toward deeper points. Avoids re-using the same primary
-        target across queries when possible.
+        Respects query_target_depth / query_min_depth when set.
         """
         qtype = self.rng.choice(self.config.query_types)
         query_id = f"q_{query_idx:03d}"
 
-        # Prefer untouched deep points; fall back to all available
-        candidates = [p for p in available_points if p not in used_targets]
-        if not candidates:
-            candidates = list(available_points)
-
-        target = self._pick_deep_point(space, candidates)
+        target = self._select_query_target(space, available_points, used_targets)
 
         match qtype:
             case QueryType.POSITION:
@@ -519,14 +545,18 @@ class ScenarioGenerator:
         final_queries: list[Query] = []
         query_idx = 0
 
-        # Space queries evenly across splits, always including the last
-        # split so the final query sees all points.
+        # When depth-targeting, place ALL queries after the last split
+        # so every point is defined before any query is issued.
         n_splits = cfg.num_splits
         n_queries = cfg.num_queries
-        if n_queries >= n_splits:
+        depth_targeted = (cfg.query_target_depth is not None
+                          or cfg.query_min_depth is not None)
+
+        if depth_targeted:
+            query_at_splits = {n_splits - 1}
+        elif n_queries >= n_splits:
             query_at_splits = set(range(n_splits))
         else:
-            # e.g. 3 queries, 5 splits → splits {0, 2, 4}
             step = (n_splits - 1) / max(1, n_queries - 1) if n_queries > 1 else 0
             query_at_splits = set(
                 round(i * step) for i in range(n_queries)

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import random
 from dataclasses import dataclass, field
 from enum import Enum, auto
+from typing import Any
 
 
 class DAGStructure(Enum):
@@ -71,6 +73,10 @@ class ScenarioConfig:
     magnitude_min: float = 1.0
     magnitude_max: float = 8.0
 
+    # Query depth targeting — force queries to specific depths
+    query_target_depth: int | None = None  # exact depth match
+    query_min_depth: int | None = None     # at-least-this-deep
+
     # Seed for reproducibility
     seed: int | None = None
 
@@ -89,6 +95,93 @@ class ScenarioConfig:
                 return 4
             case TransformDensity.EXTREME:
                 return 7
+
+    @classmethod
+    def randomize_except(
+        cls,
+        rng: random.Random,
+        pinned: dict[str, Any],
+    ) -> "ScenarioConfig":
+        """Build a config with everything randomized except pinned fields.
+
+        Handles interdependencies (e.g. no magnitude_spherical in 2D).
+        """
+        dim = pinned.get("dim", rng.choice([2, 3]))
+
+        depth_brackets = [(2, 3), (4, 6), (7, 10), (12, 16)]
+        lo, hi = rng.choice(depth_brackets)
+        min_depth = pinned.get("min_chain_depth", lo)
+        max_depth = pinned.get("max_chain_depth", hi)
+        if max_depth < min_depth:
+            max_depth = min_depth
+
+        dag = pinned.get("dag_structure",
+                         rng.choice(list(DAGStructure)))
+        dist = pinned.get("distractor_level",
+                          rng.choice(list(DistractorLevel)))
+        td = pinned.get("transform_density",
+                        rng.choice(list(TransformDensity)))
+
+        # Transform types scale with density
+        if td == TransformDensity.STATIC:
+            tt = []
+        elif td in (TransformDensity.LIGHT,):
+            tt = ["rotation", "translation"]
+        else:
+            tt = ["rotation", "translation", "reflection", "scaling"]
+        tt = pinned.get("transform_types", tt)
+
+        # Query types — always include POSITION
+        all_qt = list(QueryType)
+        qt = pinned.get("query_types",
+                        [QueryType.POSITION] + rng.sample(
+                            [q for q in all_qt if q != QueryType.POSITION],
+                            k=rng.randint(0, len(all_qt) - 1)))
+
+        # Point def types — at least 2, filter spherical for 2D
+        all_pdt = ["cartesian_offset", "magnitude_direction",
+                   "magnitude_polar", "midpoint", "weighted_centroid"]
+        if dim == 3:
+            all_pdt.append("magnitude_spherical")
+        else:
+            all_pdt = [t for t in all_pdt if t != "magnitude_spherical"]
+        k_pdt = rng.randint(2, len(all_pdt))
+        pdt = pinned.get("point_def_types", rng.sample(all_pdt, k_pdt))
+
+        # Coordinate ranges
+        coord_choices = [(-5, 5), (-10, 10), (-20, 20)]
+        cmin, cmax = rng.choice(coord_choices)
+        cmin = pinned.get("coord_min", cmin)
+        cmax = pinned.get("coord_max", cmax)
+
+        mag_choices = [(0.5, 3.0), (1.0, 8.0), (2.0, 15.0)]
+        mmin, mmax = rng.choice(mag_choices)
+        mmin = pinned.get("magnitude_min", mmin)
+        mmax = pinned.get("magnitude_max", mmax)
+
+        nq = pinned.get("num_queries", rng.choice([2, 3, 4]))
+        ns = pinned.get("num_splits", min(max_depth, 5))
+
+        return cls(
+            dim=dim,
+            min_chain_depth=min_depth,
+            max_chain_depth=max_depth,
+            dag_structure=dag,
+            distractor_level=dist,
+            transform_density=td,
+            transform_types=tt,
+            query_types=qt,
+            num_queries=nq,
+            num_splits=ns,
+            point_def_types=pdt,
+            coord_min=cmin,
+            coord_max=cmax,
+            magnitude_min=mmin,
+            magnitude_max=mmax,
+            query_target_depth=pinned.get("query_target_depth"),
+            query_min_depth=pinned.get("query_min_depth"),
+            seed=pinned.get("seed"),
+        )
 
 
 # --- Presets ---
