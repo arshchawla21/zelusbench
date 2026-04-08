@@ -23,7 +23,7 @@ ZelusBench isolates **attention**, selective focus, sustained tracking, and adap
 
 A scenario is a **sequence of statements and queries** presented to the model in natural language. Statements either define points (relative to other points) or apply transformations to the space. Queries ask the model to report computed positions, distances, or relationships.
 
-Because every point is defined relative to others via explicit geometric operations, the ground-truth answer is always **deterministically computable**. No LLM judge is needed — we compare numerical outputs against exact solutions (within a tolerance).
+Because every point is defined relative to others via explicit geometric operations, the ground-truth answer is always **deterministically computable**. No LLM judge is needed, we compare numerical outputs against exact solutions (within a tolerance).
 
 The key insight: **the math at each step is trivial** (vector addition, rotation matrices, midpoints). What makes the task hard is:
 
@@ -68,7 +68,7 @@ Some points exist only to create noise. They may:
 
 ## Events (Transformations)
 
-Events mutate the geometric state mid-scenario. They are the primary mechanism for testing **attention updating** — the model must propagate changes through its internal representation.
+Events mutate the geometric state mid-scenario. They are the primary mechanism for testing **attention updating** - the model must propagate changes through its internal representation.
 
 | Event | Description | Parameters |
 |---|---|---|
@@ -112,9 +112,9 @@ Each scenario yields **multiple scored queries**, giving a granular performance 
 
 ## Benchmark Dimensions
 
-The benchmark is parameterized across several independent axes. Each axis isolates a specific facet of attention. By varying one axis while holding others constant, we produce diagnostic profiles — not just a single aggregate score.
+The benchmark is parameterized across several independent axes. Each axis isolates a specific facet of attention. By varying one axis while holding others constant, we produce diagnostic profiles - not just a single aggregate score.
 
-### 1. Chain Depth — *Sustained Attention*
+### 1. Chain Depth - *Sustained Attention*
 
 How many dependency hops lie between the origin and the queried point?
 
@@ -126,7 +126,7 @@ How many dependency hops lie between the origin and the queried point?
 
 **Metric:** accuracy as a function of chain depth (expect degradation curve).
 
-### 2. Distractor Density — *Selective Attention*
+### 2. Distractor Density - *Selective Attention*
 
 How many irrelevant points and relationships are present relative to the relevant ones?
 
@@ -139,7 +139,7 @@ How many irrelevant points and relationships are present relative to the relevan
 
 **Metric:** accuracy drop from clean → noisy at fixed chain depth (the "distractor tax").
 
-### 3. Transformation Count — *Attention Updating*
+### 3. Transformation Count - *Attention Updating*
 
 How many events (rotations, translations, invalidations) occur before the query?
 
@@ -152,7 +152,7 @@ How many events (rotations, translations, invalidations) occur before the query?
 
 **Metric:** accuracy as a function of transformation count. Separately measured for each event type (rotations vs. invalidations may have very different costs).
 
-### 4. Dimensionality — *Representational Load*
+### 4. Dimensionality - *Representational Load*
 
 | Level | Space |
 |---|---|
@@ -162,7 +162,7 @@ How many events (rotations, translations, invalidations) occur before the query?
 
 **Metric:** accuracy by dimensionality at fixed chain depth. Tests whether the model can maintain higher-dimensional state.
 
-### 5. Query Position — *Recency & Primacy Bias*
+### 5. Query Position - *Recency & Primacy Bias*
 
 Where in the sequence is the relevant information defined?
 
@@ -174,7 +174,7 @@ Where in the sequence is the relevant information defined?
 
 **Metric:** accuracy by information position. Reveals primacy/recency bias in attention.
 
-### 6. DAG Complexity — *Structural Attention*
+### 6. DAG Complexity - *Structural Attention*
 
 | Level | Structure |
 |---|---|
@@ -207,12 +207,12 @@ Relative error: `‖predicted - truth‖ / max(‖truth‖, ε)` where `ε` avoi
 
 The benchmark produces **diagnostic profiles**, not a single leaderboard number:
 
-1. **Attention Decay Curve** — accuracy vs. chain depth (per dimensionality)
-2. **Distractor Robustness Score** — accuracy retention ratio (noisy / clean)
-3. **Transform Adaptation Score** — accuracy post-event vs. pre-event (per event type)
-4. **Positional Bias Map** — accuracy heatmap by where information appeared in the sequence
-5. **Topology Sensitivity** — accuracy by DAG structure
-6. **Overall ZelusBench Score** — weighted harmonic mean across all dimensions (for leaderboard)
+1. **Attention Decay Curve** - accuracy vs. chain depth (per dimensionality)
+2. **Distractor Robustness Score** - accuracy retention ratio (noisy / clean)
+3. **Transform Adaptation Score** - accuracy post-event vs. pre-event (per event type)
+4. **Positional Bias Map** - accuracy heatmap by where information appeared in the sequence
+5. **Topology Sensitivity** - accuracy by DAG structure
+6. **Overall ZelusBench Score** - weighted harmonic mean across all dimensions (for leaderboard)
 
 ---
 
@@ -267,7 +267,7 @@ zelusbench/
 
 ### Key Design Principles
 
-- **`Space` is the single source of truth.** It holds a DAG of `PointDefinition` objects and can resolve any point to an absolute coordinate at any time. All transforms mutate the `Space`. The engine's correctness is verified with unit tests — if the engine is correct, ground truth is correct.
+- **`Space` is the single source of truth.** It holds a DAG of `PointDefinition` objects and can resolve any point to an absolute coordinate at any time. All transforms mutate the `Space`. The engine's correctness is verified with unit tests - if the engine is correct, ground truth is correct.
 - **Scenarios are serializable.** A scenario is a JSON object containing the sequence of statements, events, and queries plus ground-truth answers. This is what gets published to Kaggle.
 - **Templates are swappable.** The same geometric scenario can be rendered into different natural language phrasings (formal vs. casual, verbose vs. terse) to control for prompt sensitivity.
 
