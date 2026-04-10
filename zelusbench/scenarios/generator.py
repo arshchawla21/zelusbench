@@ -207,6 +207,151 @@ class ScenarioGenerator:
         )
 
     # ------------------------------------------------------------------
+    # Trace-based generation (for visualization / debugging)
+    # ------------------------------------------------------------------
+
+    def generate_trace(self, scenario_id: str) -> list[dict]:
+        """Generate a scenario and return a step-by-step trace.
+
+        Each step is a dict with:
+          - step: int
+          - type: "point" | "transform" | "query"
+          - text: str (the rendered line)
+          - space: dict (full space snapshot AFTER this step)
+          - point_depths: dict[str, int]
+          - leaves: list[str]
+          - phase: 1 | 2
+          - extras: dict (point name, defn type, transform type, query info, etc.)
+        """
+        cfg = self.config
+        space = Space(dim=cfg.dim)
+        trace: list[dict] = []
+        step = 0
+
+        def snapshot(space: Space) -> dict:
+            pts = space.non_origin_points()
+            return {
+                "positions": {n: space.get_position(n).tolist() for n in ["O"] + pts},
+                "depths": {n: space.chain_depth(n) for n in pts},
+                "leaves": space.leaf_nodes(),
+                "edges": [
+                    (a, n)
+                    for n in pts
+                    for a in space.get_definition(n).anchors
+                ],
+            }
+
+        num_points = max(cfg.num_points, cfg.min_chain_depth)
+        points_placed = 0
+        max_depth = 0
+        queries_remaining = cfg.num_queries
+        query_interval = max(1, num_points // (queries_remaining + 1))
+        used_targets: set[str] = set()
+        used_combos: set[tuple[str, str]] = set()
+        query_idx = 0
+        final_queries: list[Query] = []
+
+        # Phase 1
+        while points_placed < num_points and max_depth < cfg.min_chain_depth:
+            depth_deficit = cfg.min_chain_depth - max_depth
+            points_left = num_points - points_placed
+            must_extend = depth_deficit >= points_left
+            if must_extend:
+                name, defn = self._gen_point_from_deepest(space)
+            else:
+                name, defn = self._gen_point(space, leaf_bias=cfg.leaf_bias)
+            text = render_point_definition(name, defn)
+            points_placed += 1
+            max_depth = max(max_depth, space.chain_depth(name))
+            trace.append({
+                "step": step, "type": "point", "text": text,
+                "space": snapshot(space), "phase": 1,
+                "extras": {"name": name, "def_type": defn.def_type.name,
+                           "anchors": defn.anchors, "depth": space.chain_depth(name),
+                           "must_extend": must_extend},
+            })
+            step += 1
+
+        # Phase 2
+        while points_placed < num_points:
+            pts = space.non_origin_points()
+            if (cfg.transform_prob > 0 and len(pts) >= 2
+                    and cfg.transform_types
+                    and self.rng.random() < cfg.transform_prob):
+                t = self._plan_single_transform(pts)
+                t.apply(space)
+                text = render_transform(t)
+                trace.append({
+                    "step": step, "type": "transform", "text": text,
+                    "space": snapshot(space), "phase": 2,
+                    "extras": {"transform_type": t.transform_type.name,
+                               "affected_points": t.params.get("points", [])},
+                })
+                step += 1
+                continue
+
+            effective_lb = cfg.leaf_bias
+            if max_depth >= cfg.max_chain_depth:
+                effective_lb = min(effective_lb, 0.2)
+
+            name, defn = self._gen_point(space, leaf_bias=effective_lb)
+            text = render_point_definition(name, defn)
+            points_placed += 1
+            max_depth = max(max_depth, space.chain_depth(name))
+            trace.append({
+                "step": step, "type": "point", "text": text,
+                "space": snapshot(space), "phase": 2,
+                "extras": {"name": name, "def_type": defn.def_type.name,
+                           "anchors": defn.anchors, "depth": space.chain_depth(name),
+                           "effective_lb": effective_lb},
+            })
+            step += 1
+
+            if (queries_remaining > 0
+                    and points_placed % query_interval == 0
+                    and len(space.non_origin_points()) >= 2
+                    and self._has_valid_query_target(space)):
+                q = self._plan_single_query(
+                    space, space.non_origin_points(), used_targets, query_idx,
+                    used_combos=used_combos,
+                )
+                q = self._recompute_ground_truth(q, space)
+                used_targets.add(q.target_points[0])
+                used_combos.add((q.target_points[0], q.query_type.name))
+                final_queries.append(q)
+                trace.append({
+                    "step": step, "type": "query", "text": self._render_query(q, cfg.dim),
+                    "space": snapshot(space), "phase": 2,
+                    "extras": {"query_id": q.query_id, "query_type": q.query_type.name,
+                               "targets": q.target_points, "depth": q.chain_depth},
+                })
+                step += 1
+                query_idx += 1
+                queries_remaining -= 1
+
+        while queries_remaining > 0:
+            pts = space.non_origin_points()
+            if not pts:
+                break
+            q = self._plan_single_query(space, pts, used_targets, query_idx,
+                                         used_combos=used_combos)
+            q = self._recompute_ground_truth(q, space)
+            used_targets.add(q.target_points[0])
+            used_combos.add((q.target_points[0], q.query_type.name))
+            final_queries.append(q)
+            trace.append({
+                "step": step, "type": "query", "text": self._render_query(q, cfg.dim),
+                "space": snapshot(space), "phase": 3,
+                "extras": {"query_id": q.query_id, "query_type": q.query_type.name,
+                           "targets": q.target_points, "depth": q.chain_depth},
+            })
+            step += 1
+            query_idx += 1
+            queries_remaining -= 1
+
+        return trace
+
+    # ------------------------------------------------------------------
     # Point generation
     # ------------------------------------------------------------------
 
