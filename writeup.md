@@ -13,13 +13,13 @@ The benefit of working in a space, is it is easy interpretable, allowing us to e
 tricky concept that is "what information matters". 
 
 The benchmark generates a space containing points, each defined in relation to others -- so called "chains". For example A is x units
-from the origin and so forth. At the end (or even during), the model is "queries" where it must answer some 
+from the origin and so forth. At the end (or even during), the model recieves "queries" where it must answer some 
 question about the space, eg
 
 - is A closer to B or C
 - what are the coordiantes of D
 
-Each of which having a true, precomputed value. By tweaking parts of the generation, we can probe the LLMs attention
+Each of which having a true, deterministic value. By tweaking parts of the generation, we can probe the LLMs attention
 abilities. 
 
 - Selective -- add noise (more points relative depth of chains)
