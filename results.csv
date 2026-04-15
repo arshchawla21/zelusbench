@@ -1,0 +1,71 @@
+,model,task,score
+0,Gemma 4 31B,overall,0.7890000000000001
+1,Gemma 4 31B,shifting_low,0.81
+2,Gemma 4 31B,shifting_medium,0.612
+3,Gemma 4 31B,shifting_high,0.5
+4,Gemma 4 31B,sustained_short,0.96
+5,Gemma 4 31B,sustained_medium,0.862
+6,Gemma 4 31B,sustained_long,0.95
+7,Gemma 4 31B,selective_low,0.935
+8,Gemma 4 31B,selective_medium,0.735
+9,Gemma 4 31B,selective_high,0.737
+10,Claude Opus 4.6,overall,0.724
+11,Claude Opus 4.6,shifting_low,0.77
+12,Claude Opus 4.6,shifting_medium,0.572
+13,Claude Opus 4.6,shifting_high,0.438
+14,Claude Opus 4.6,sustained_short,0.96
+15,Claude Opus 4.6,sustained_medium,0.88
+16,Claude Opus 4.6,sustained_long,0.935
+17,Claude Opus 4.6,selective_low,0.908
+18,Claude Opus 4.6,selective_medium,0.53
+19,Claude Opus 4.6,selective_high,0.523
+20,Claude Sonnet 4,overall,0.6594444444444444
+21,Claude Sonnet 4,shifting_low,0.54
+22,Claude Sonnet 4,shifting_medium,0.458
+23,Claude Sonnet 4,shifting_high,0.475
+24,Claude Sonnet 4,sustained_short,0.937
+25,Claude Sonnet 4,sustained_medium,0.887
+26,Claude Sonnet 4,sustained_long,0.83
+27,Claude Sonnet 4,selective_low,0.808
+28,Claude Sonnet 4,selective_medium,0.522
+29,Claude Sonnet 4,selective_high,0.478
+30,DeepSeek V3.2,overall,0.6542222222222221
+31,DeepSeek V3.2,shifting_low,0.967
+32,DeepSeek V3.2,shifting_medium,0.417
+33,DeepSeek V3.2,shifting_high,0.508
+34,DeepSeek V3.2,sustained_short,0.568
+35,DeepSeek V3.2,sustained_medium,0.84
+36,DeepSeek V3.2,sustained_long,0.8
+37,DeepSeek V3.2,selective_low,0.518
+38,DeepSeek V3.2,selective_medium,0.547
+39,DeepSeek V3.2,selective_high,0.723
+40,Gemini 2.5 Flash,overall,0.592111111111111
+41,Gemini 2.5 Flash,shifting_low,0.703
+42,Gemini 2.5 Flash,shifting_medium,0.51
+43,Gemini 2.5 Flash,shifting_high,0.48
+44,Gemini 2.5 Flash,sustained_short,0.798
+45,Gemini 2.5 Flash,sustained_medium,0.88
+46,Gemini 2.5 Flash,sustained_long,0.325
+47,Gemini 2.5 Flash,selective_low,0.898
+48,Gemini 2.5 Flash,selective_medium,0.525
+49,Gemini 2.5 Flash,selective_high,0.21
+50,GPT-5.4,overall,0.4255555555555556
+51,GPT-5.4,shifting_low,0.397
+52,GPT-5.4,shifting_medium,0.378
+53,GPT-5.4,shifting_high,0.298
+54,GPT-5.4,sustained_short,0.902
+55,GPT-5.4,sustained_medium,0.257
+56,GPT-5.4,sustained_long,0.12
+57,GPT-5.4,selective_low,0.628
+58,GPT-5.4,selective_medium,0.438
+59,GPT-5.4,selective_high,0.412
+60,GPT-5.4 mini,overall,0.298
+61,GPT-5.4 mini,shifting_low,0.307
+62,GPT-5.4 mini,shifting_medium,0.272
+63,GPT-5.4 mini,shifting_high,0.313
+64,GPT-5.4 mini,sustained_short,0.402
+65,GPT-5.4 mini,sustained_medium,0.2
+66,GPT-5.4 mini,sustained_long,0.05
+67,GPT-5.4 mini,selective_low,0.525
+68,GPT-5.4 mini,selective_medium,0.308
+69,GPT-5.4 mini,selective_high,0.305
